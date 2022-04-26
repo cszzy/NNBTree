@@ -16,16 +16,13 @@ int main(int argc, char **argv) {
   // Parsing arguments
   int numData = 0;
   int n_threads = 1;
-  char *input_path = (char *)std::string("../sample_input.txt").data();
+  char *input_path = (char *)std::string("./sample_input.txt").data();
 
   int c;
-  while ((c = getopt(argc, argv, "n:w:t:i:")) != -1) {
+  while ((c = getopt(argc, argv, "n:t:i:")) != -1) {
     switch (c) {
     case 'n':
       numData = atoi(optarg);
-      break;
-    case 'w':
-      write_latency_in_ns = atol(optarg);
       break;
     case 't':
       n_threads = atoi(optarg);
@@ -37,8 +34,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  btree *bt;
-  bt = new btree();
+  FastFair::btree *bt;
+  bt = new FastFair::btree();
 
   struct timespec start, end, tmp;
 
@@ -56,12 +53,6 @@ int main(int argc, char **argv) {
     ifs >> keys[i];
   }
   ifs.close();
-
-  // Initializing stats
-  clflush_cnt = 0;
-  search_time_in_insert = 0;
-  clflush_time_in_insert = 0;
-  gettime_cnt = 0;
 
   clock_gettime(CLOCK_MONOTONIC, &start);
 

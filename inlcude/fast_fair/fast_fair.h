@@ -11,6 +11,9 @@
    Please use at your own risk.
 */
 
+// concurrent Fast_Fair
+#pragma once
+
 #include <cassert>
 #include <climits>
 #include <fstream>
@@ -26,55 +29,37 @@
 #include <unistd.h>
 #include <vector>
 
-#define PAGESIZE 512
+#include "../nvm_alloc.h"
 
-#define CPU_FREQ_MHZ (2400)
-#define DELAY_IN_NS (1000)
+#define PAGESIZE 256
+
 #define CACHE_LINE_SIZE 64
-#define QUERY_NUM 25
 
-// 用来指示lookup移动的方向
+// 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
 using entry_key_t = int64_t;
 
 pthread_mutex_t print_mtx;
 
-static inline void cpu_pause() { __asm__ volatile("pause" ::: "memory"); }
-static inline unsigned long read_tsc(void) {
-  unsigned long var;
-  unsigned int hi, lo;
-
-  asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-  var = ((unsigned long long int)hi << 32) | lo;
-
-  return var;
-}
-
-unsigned long write_latency_in_ns = 0; // 为啥设置成0呢?
-unsigned long long search_time_in_insert = 0;
-unsigned int gettime_cnt = 0;
-unsigned long long clflush_time_in_insert = 0;
-unsigned long long update_time_in_insert = 0;
-int clflush_cnt = 0;
-int node_cnt = 0;
-
 using namespace std;
 
-inline void mfence() { asm volatile("mfence" ::: "memory"); }
-
 inline void clflush(char *data, int len) {
-  volatile char *ptr = (char *)((unsigned long)data & ~(CACHE_LINE_SIZE - 1)); // 取data的64位对齐地址
-  mfence();
-  for (; ptr < data + len; ptr += CACHE_LINE_SIZE) {
-    unsigned long etsc =
-        read_tsc() + (unsigned long)(write_latency_in_ns * CPU_FREQ_MHZ / 1000);
-    asm volatile("clflush %0" : "+m"(*(volatile char *)ptr));
-    while (read_tsc() < etsc) // write_latency_in_ns的时间，直到flush
-      cpu_pause();
-    //++clflush_cnt;
-  }
-  mfence(); // 调用mfence()确保顺序
+#ifndef USE_MEM
+    NVM::Mem_persist(data, len);
+#endif
+}
+
+namespace FastFair {
+
+// const size_t NVM_ValueSize = 256;
+void alloc_memalign(void **ret, size_t alignment, size_t size) {
+#ifdef USE_MEM
+  posix_memalign(ret, alignment, size);
+#else
+  *ret =  NVM::data_alloc->alloc(size);
+  assert(*ret);
+#endif
 }
 
 class page;
@@ -97,6 +82,14 @@ public:
   void btree_search_range(entry_key_t, entry_key_t, unsigned long *);
   void printAll();
 
+  // zzy add
+  btree(page *root);
+  page *btree_search_leaf(entry_key_t);
+  void btree_search_range(entry_key_t, entry_key_t, std::vector<pair<entry_key_t, uint64_t>> &result, int &size); 
+  void btree_search_range(entry_key_t, entry_key_t, void **values, int &size); 
+  void PrintInfo();
+  void CalculateSapce(uint64_t &space);
+
   friend class page;
 };
 
@@ -107,8 +100,8 @@ private:
   uint32_t level;         // 4 bytes // 叶节点level为0, 向上累加
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?
-  int16_t last_index;     // 2 bytes // ?应该是指示最后条目的位置
-  std::mutex *mtx;        // 8 bytes // 写独占?
+  int16_t last_index;     // 2 bytes // 指示最后条目的位置
+  std::mutex *mtx;        // 8 bytes // 写独占
 
   friend class page;
   friend class btree;
@@ -176,8 +169,13 @@ public:
 
   void *operator new(size_t size) {
     void *ret;
-    posix_memalign(&ret, 64, size);
+    // posix_memalign(&ret, 64, size);
+    alloc_memalign(&ret, 64, size);
     return ret;
+  }
+
+  uint32_t GetLevel() {
+    return hdr.level;
   }
 
   // 返回条目数量
@@ -216,6 +214,8 @@ public:
     int i;
     // 从左到右遍历搜索key
     for (i = 0; records[i].ptr != NULL; ++i) {
+        // zzy add
+      // NVM::const_stat.AddCompare();
       if (!shift && records[i].key == key) {
         records[i].ptr =
             (i == 0) ? (char *)hdr.leftmost_ptr : records[i - 1].ptr;
@@ -241,6 +241,8 @@ public:
 
     if (shift) {
       --hdr.last_index;
+    //   zzy add
+      clflush((char *)&(hdr.last_index), sizeof(int16_t));
     }
     return shift;
   }
@@ -527,6 +529,8 @@ public:
 
       // FAST
       for (i = *num_entries - 1; i >= 0; i--) {
+        //   zzy add
+          // NVM::const_stat.AddCompare();
         if (key < records[i].key) {
           records[i + 1].ptr = records[i].ptr;
           records[i + 1].key = records[i].key;
@@ -567,6 +571,8 @@ public:
 
     if (update_last_index) {
       hdr.last_index = *num_entries;
+    //   zzy add
+    clflush((char *)&(hdr.last_index), sizeof(int16_t));
     }
     ++(*num_entries);
   }
@@ -591,6 +597,8 @@ public:
       if (key > hdr.sibling_ptr->records[0].key) { 
         // 如果兄弟节点的最小key大于要插入的key,
         // 则在兄弟节点执行插入，对应论文Fair算法中更新父节点时出现并发Insert的情况
+        // zzy add
+        // NVM::const_stat.AddCompare();
         if (with_lock) {
           hdr.mtx->unlock(); // Unlock the write lock
         }
@@ -654,6 +662,8 @@ public:
       page *ret;
 
       // insert the key
+    //   zzy add
+    // NVM::const_stat.AddCompare();
       if (key < split_key) {
         insert_key(key, right, &num_entries);
         ret = this;
@@ -702,6 +712,8 @@ public:
 
         if (IS_FORWARD(previous_switch_counter)) { // 
           if ((tmp_key = current->records[0].key) > min) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if (tmp_key < max) {
               if ((tmp_ptr = current->records[0].ptr) != NULL) {
                 if (tmp_key == current->records[0].key) {
@@ -716,6 +728,8 @@ public:
 
           for (i = 1; current->records[i].ptr != NULL; ++i) {
             if ((tmp_key = current->records[i].key) > min) {
+                // zzy add
+                // NVM::const_stat.AddCompare();
               if (tmp_key < max) {
                 if ((tmp_ptr = current->records[i].ptr) !=
                     current->records[i - 1].ptr) {
@@ -731,6 +745,8 @@ public:
         } else {
           for (i = count() - 1; i > 0; --i) {
             if ((tmp_key = current->records[i].key) > min) {
+                // zzy add
+                // NVM::const_stat.AddCompare();
               if (tmp_key < max) {
                 if ((tmp_ptr = current->records[i].ptr) !=
                     current->records[i - 1].ptr) {
@@ -745,6 +761,8 @@ public:
           }
 
           if ((tmp_key = current->records[0].key) > min) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if (tmp_key < max) {
               if ((tmp_ptr = current->records[0].ptr) != NULL) {
                 if (tmp_key == current->records[0].key) {
@@ -777,6 +795,8 @@ public:
 
         // search from left ro right
         if (IS_FORWARD(previous_switch_counter)) {
+            // zzy add
+            // NVM::const_stat.AddCompare();
           if ((k = records[0].key) == key) {
             if ((t = records[0].ptr) != NULL) {
               if (k == records[0].key) {
@@ -787,6 +807,8 @@ public:
           }
 
           for (i = 1; records[i].ptr != NULL; ++i) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if ((k = records[i].key) == key) {
               if (records[i - 1].ptr != (t = records[i].ptr)) {
                 if (k == records[i].key) {
@@ -798,6 +820,8 @@ public:
           }
         } else { // search from right to left
           for (i = count() - 1; i > 0; --i) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if ((k = records[i].key) == key) {
               if (records[i - 1].ptr != (t = records[i].ptr) && t) {
                 if (k == records[i].key) {
@@ -809,6 +833,8 @@ public:
           }
 
           if (!ret) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if ((k = records[0].key) == key) {
               if (NULL != (t = records[0].ptr) && t) {
                 if (k == records[0].key) {
@@ -825,6 +851,9 @@ public:
         return ret;
       }
 
+    //   zzy add
+    // NVM::const_stat.AddCompare();
+
       if ((t = (char *)hdr.sibling_ptr) && key >= ((page *)t)->records[0].key)
         return t;
 
@@ -835,6 +864,8 @@ public:
         ret = NULL;
 
         if (IS_FORWARD(previous_switch_counter)) {
+            // zzy add
+            // NVM::const_stat.AddCompare();
           if (key < (k = records[0].key)) {
             if ((t = (char *)hdr.leftmost_ptr) != records[0].ptr) {
               ret = t;
@@ -843,6 +874,8 @@ public:
           }
 
           for (i = 1; records[i].ptr != NULL; ++i) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if (key < (k = records[i].key)) {
               if ((t = records[i - 1].ptr) != records[i].ptr) {
                 ret = t;
@@ -857,6 +890,8 @@ public:
           }
         } else { // search from right to left
           for (i = count() - 1; i >= 0; --i) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
             if (key >= (k = records[i].key)) {
               if (i == 0) {
                 if ((char *)hdr.leftmost_ptr != (t = records[i].ptr)) {
@@ -875,6 +910,8 @@ public:
       } while (hdr.switch_counter != previous_switch_counter);
 
       if ((t = (char *)hdr.sibling_ptr) != NULL) {
+        //   zzy add
+        // NVM::const_stat.AddCompare();
         if (key >= ((page *)t)->records[0].key)
           return t;
       }
@@ -926,6 +963,262 @@ public:
       }
     }
   }
+
+    void CalculateSapce(uint64_t &space) {
+        if(hdr.leftmost_ptr==NULL) {
+            space += PAGESIZE;
+        } else {
+            space += PAGESIZE;
+            ((page*) hdr.leftmost_ptr)->CalculateSapce(space);
+            for(int i=0;records[i].ptr != NULL;++i){
+                ((page*) records[i].ptr)->CalculateSapce(space);
+            }
+        }
+    }
+
+      // Search keys with linear search
+  void linear_search_range(entry_key_t min, entry_key_t max, 
+      std::vector<pair<uint64_t, uint64_t>> &result, int &size) {
+    int i, off = 0;
+    uint8_t previous_switch_counter;
+    page *current = this;
+
+    while (current) {
+      int old_off = off;
+      do {
+        previous_switch_counter = current->hdr.switch_counter;
+        off = old_off;
+
+        entry_key_t tmp_key;
+        char *tmp_ptr;
+
+        if (IS_FORWARD(previous_switch_counter)) { // 
+          if ((tmp_key = current->records[0].key) > min) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
+            if (tmp_key < max) {
+              if ((tmp_ptr = current->records[0].ptr) != NULL) {
+                if (tmp_key == current->records[0].key) {
+                  if (tmp_ptr) {
+                    // zzy add
+                    // buf[off++] = (unsigned long)tmp_ptr;
+                    result.push_back({tmp_key, (uint64_t)tmp_ptr});
+                    off++;
+                    if(off >= size) {
+                      return;
+                    }
+                  }
+                }
+              }
+            } else {
+              // zzy add
+              size = off;
+              return;
+            }
+          }
+
+          for (i = 1; current->records[i].ptr != NULL; ++i) {
+            if ((tmp_key = current->records[i].key) > min) {
+              // zzy add
+              // NVM::const_stat.AddCompare();
+              if (tmp_key < max) {
+                if ((tmp_ptr = current->records[i].ptr) !=
+                    current->records[i - 1].ptr) {
+                  if (tmp_key == current->records[i].key) {
+                    if (tmp_ptr) {
+                      // buf[off++] = (unsigned long)tmp_ptr;
+                      result.push_back({tmp_key, (uint64_t)tmp_ptr});
+                      off++;
+                      if(off >= size) {
+                        return;
+                      }
+                    }
+                      
+                  }
+                }
+              } else {
+                // zzy add
+                size = off;
+                return;
+              } 
+            }
+          }
+        } else {
+          for (i = count() - 1; i > 0; --i) {
+            if ((tmp_key = current->records[i].key) > min) {
+              // zzy add
+              // NVM::const_stat.AddCompare();
+              if (tmp_key < max) {
+                if ((tmp_ptr = current->records[i].ptr) !=
+                    current->records[i - 1].ptr) {
+                  if (tmp_key == current->records[i].key) {
+                    if (tmp_ptr) {
+                      // buf[off++] = (unsigned long)tmp_ptr;
+                      // zzy add
+                      result.push_back({tmp_key, (uint64_t)tmp_ptr});
+                      off++;
+                      if(off >= size) {
+                        return;
+                      }
+                    }
+                  }
+                }
+              } else {
+                size = off;
+                return;
+              }
+            }
+          }
+
+          if ((tmp_key = current->records[0].key) > min) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
+            if (tmp_key < max) {
+              if ((tmp_ptr = current->records[0].ptr) != NULL) {
+                if (tmp_key == current->records[0].key) {
+                  if (tmp_ptr) {
+                    // buf[off++] = (unsigned long)tmp_ptr;
+                    // zzy add
+                    result.push_back({tmp_key, (uint64_t)tmp_ptr});
+                    off++;
+                    if(off >= size) {
+                      return;
+                    }
+                  }
+                }
+              }
+            } else {
+              size = off;
+              return;
+            }
+          }
+        }
+      } while (previous_switch_counter != current->hdr.switch_counter); // 发生了修改操作，重试
+
+      current = current->hdr.sibling_ptr; // 移动到下一个page
+    }
+    size = off;
+  }
+
+  void linear_search_range(entry_key_t min, 
+        entry_key_t max, void **values, int &size) {
+    int i, off = 0;
+    uint8_t previous_switch_counter;
+    page *current = this;
+
+    while (current) {
+      int old_off = off;
+      do {
+        previous_switch_counter = current->hdr.switch_counter;
+        off = old_off;
+
+        entry_key_t tmp_key;
+        char *tmp_ptr;
+
+        if (IS_FORWARD(previous_switch_counter)) { // 
+          if ((tmp_key = current->records[0].key) > min) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
+            if (tmp_key < max) {
+              if ((tmp_ptr = current->records[0].ptr) != NULL) {
+                if (tmp_key == current->records[0].key) {
+                  if (tmp_ptr) {
+                    // zzy add
+                    // buf[off++] = (unsigned long)tmp_ptr;
+                    values[off++] = tmp_ptr;
+                    if(off >= size) {
+                      return;
+                    }
+                  }
+                }
+              }
+            } else {
+              // zzy add
+              size = off;
+              return;
+            }
+          }
+
+          for (i = 1; current->records[i].ptr != NULL; ++i) {
+            if ((tmp_key = current->records[i].key) > min) {
+              // zzy add
+              // NVM::const_stat.AddCompare();
+              if (tmp_key < max) {
+                if ((tmp_ptr = current->records[i].ptr) !=
+                    current->records[i - 1].ptr) {
+                  if (tmp_key == current->records[i].key) {
+                    if (tmp_ptr) {
+                      // buf[off++] = (unsigned long)tmp_ptr;
+                      values[off++] = tmp_ptr;
+                      if(off >= size) {
+                        return;
+                      }
+                    }
+                      
+                  }
+                }
+              } else {
+                // zzy add
+                size = off;
+                return;
+              } 
+            }
+          }
+        } else {
+          for (i = count() - 1; i > 0; --i) {
+            if ((tmp_key = current->records[i].key) > min) {
+              // zzy add
+              // NVM::const_stat.AddCompare();
+              if (tmp_key < max) {
+                if ((tmp_ptr = current->records[i].ptr) !=
+                    current->records[i - 1].ptr) {
+                  if (tmp_key == current->records[i].key) {
+                    if (tmp_ptr) {
+                      // buf[off++] = (unsigned long)tmp_ptr;
+                      // zzy add
+                      values[off++] = tmp_ptr;
+                      if(off >= size) {
+                        return;
+                      }
+                    }
+                  }
+                }
+              } else {
+                size = off;
+                return;
+              }
+            }
+          }
+
+          if ((tmp_key = current->records[0].key) > min) {
+            //   zzy add
+            // NVM::const_stat.AddCompare();
+            if (tmp_key < max) {
+              if ((tmp_ptr = current->records[0].ptr) != NULL) {
+                if (tmp_key == current->records[0].key) {
+                  if (tmp_ptr) {
+                    // buf[off++] = (unsigned long)tmp_ptr;
+                    // zzy add
+                      values[off++] = tmp_ptr;
+                      if(off >= size) {
+                        return;
+                      }
+                  }
+                }
+              }
+            } else {
+              size = off;
+              return;
+            }
+          }
+        }
+      } while (previous_switch_counter != current->hdr.switch_counter); // 发生了修改操作，重试
+
+      current = current->hdr.sibling_ptr; // 移动到下一个page
+    }
+    size = off;
+  }
+
 };
 
 /*
@@ -938,6 +1231,20 @@ btree::btree() {
   clflush((char *)root, sizeof(page));
   height = 1;
   clflush((char *)this, sizeof(btree));
+  printf("[Fast-Fair]: root is %p, btree is %p.\n", root, this);
+}
+
+btree::btree(page *root_) {
+    if(root_ == nullptr) {
+      root = (char *)new page();
+      clflush((char *)root, sizeof(page));
+      height = 1;
+      clflush((char *)this, sizeof(btree));
+    } else {
+      root = (char *)root_;
+      height = root_->GetLevel() + 1;
+    }
+    printf("[Fast-Fair]: root is %p, btree is %p, height is %d.\n", root, this, height);
 }
 
 void btree::setNewRoot(char *new_root) {
@@ -1106,3 +1413,5 @@ void btree::printAll() {
   printf("total number of keys: %d\n", total_keys);
   pthread_mutex_unlock(&print_mtx);
 }
+
+} // end namespace FastFair

@@ -1,5 +1,4 @@
-#ifndef _NVM_ALLOC_H
-#define _NVM_ALLOC_H
+#pragma once
 
 #include <filesystem>
 #include <libpmem.h>
@@ -14,7 +13,9 @@ namespace NVM
 {
 #define TEST_PMEM_SIZE
 #ifdef TEST_PMEM_SIZE
-    extern uint64_t pmem_size;
+    // zzy modify
+    // extern uint64_t pmem_size;
+    uint64_t pmem_size;
 #endif
 #define CACHE_LINE_SIZE 64
 #define mfence _mm_sfence
@@ -194,9 +195,12 @@ namespace NVM
         std::mutex lock_;
     };
 #endif
-    extern Alloc *common_alloc;
-    extern Alloc *data_alloc;
-    extern Alloc *data_alloc;
+    // zzy modify
+    // extern Alloc *common_alloc;
+    // extern Alloc *data_alloc;
+    const size_t data_alloc_size = 10 * 1024 * 1024 * 1024UL;
+    Alloc *common_alloc = new NVM::Alloc("/mnt/AEP0/common", data_alloc_size);
+    Alloc *data_alloc = new NVM::Alloc("/mnt/AEP0/data", data_alloc_size);
 
     class AllocBase
     {
@@ -428,5 +432,3 @@ namespace NVM
     void show_stat();
 
 } // namespace NVM
-
-#endif
