@@ -3,6 +3,9 @@ a.out
 *.txt
 *.xlsx
 
+btree_concurrent
+btree_concurrent_mixed
+
 ## CMake
 build/
 
