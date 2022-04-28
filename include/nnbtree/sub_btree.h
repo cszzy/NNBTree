@@ -28,14 +28,14 @@
 #include "statistics.h"
 #include "index_btree.h"
 
-#define PAGESIZE 256
+#define PAGESIZE 128
 
 #define CACHE_LINE_SIZE 64
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 4 // 子树最大高度设置为4
+#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度
 
 using entry_key_t = int64_t;
 
@@ -726,6 +726,7 @@ public:
             if (with_lock) {
               hdr.mtx->unlock(); // Unlock the write lock
             }
+            printf("generate index tree: %x\n", index_tree);
           } else {
             if (with_lock) {
               hdr.mtx->unlock(); // Unlock the write lock
