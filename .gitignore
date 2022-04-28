@@ -3,6 +3,8 @@ a.out
 *.txt
 *.xlsx
 
+!CMakeLists.txt
+
 btree_concurrent
 btree_concurrent_mixed
 

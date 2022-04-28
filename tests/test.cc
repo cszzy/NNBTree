@@ -1,4 +1,6 @@
-#include "fast_fair.h"
+#include "nnbtree/sub_btree.h"
+
+using namespace std;
 
 void clear_cache() {
   // Remove cache
@@ -34,8 +36,8 @@ int main(int argc, char **argv) {
     }
   }
 
-  FastFair::btree *bt;
-  bt = new FastFair::btree();
+  nnbtree::SubTree *bt;
+  bt = new nnbtree::SubTree();
 
   struct timespec start, end, tmp;
 
