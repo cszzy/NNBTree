@@ -1,5 +1,10 @@
 #include "nnbtree/sub_btree.h"
 
+// nnbtree并发测试
+// ./simple_test -n 10000 -i ./sample_input.txt -t 16 > res
+ 
+#define MIXED // 混合op
+
 using namespace std;
 
 void clear_cache() {
@@ -36,6 +41,9 @@ int main(int argc, char **argv) {
     }
   }
 
+  NVM::env_init();
+  NVM::data_init();
+
   nnbtree::SubTree *bt;
   bt = new nnbtree::SubTree();
 
@@ -64,6 +72,8 @@ int main(int argc, char **argv) {
   for (int i = 0; i < half_num_data; ++i) {
     bt->btree_insert(keys[i], (char *)keys[i]);
   }
+  // bt->printAll();
+  
   cout << "Warm-up!" << endl;
 
   clock_gettime(CLOCK_MONOTONIC, &end);
@@ -191,6 +201,8 @@ int main(int argc, char **argv) {
 
   delete bt;
   delete[] keys;
+
+  NVM::env_exit();
 
   return 0;
 }

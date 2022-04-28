@@ -85,8 +85,8 @@ public:
   // zzy add
   btree(page *root);
   page *btree_search_leaf(entry_key_t);
-  void btree_search_range(entry_key_t, entry_key_t, std::vector<pair<entry_key_t, uint64_t>> &result, int &size); 
-  void btree_search_range(entry_key_t, entry_key_t, void **values, int &size); 
+  void btree_search_range(entry_key_t, entry_key_t, std::vector<std::pair<uint64_t, uint64_t>> &, int &); 
+  void btree_search_range(entry_key_t, entry_key_t, void **, int &); 
   void PrintInfo();
   void CalculateSapce(uint64_t &space);
 
@@ -1390,6 +1390,53 @@ void btree::btree_search_range(entry_key_t min, entry_key_t max,
       break;
     }
   }
+}
+
+void btree::btree_search_range(entry_key_t min, entry_key_t max, 
+    std::vector<std::pair<uint64_t, uint64_t>> &result, int &size) {
+    page *p = (page *)root;
+
+    while(p) {
+        if(p->hdr.leftmost_ptr != NULL) {
+        // The current page is internal
+            p = (page *)p->linear_search(min);
+        }
+        else {
+        // Found a leaf
+            p->linear_search_range(min, max, result, size);
+
+        break;
+        }
+    }
+}
+
+void btree::btree_search_range(entry_key_t min, entry_key_t max, void **values, int &size) {
+    page *p = (page *)root;
+
+    while(p) {
+        if(p->hdr.leftmost_ptr != NULL) {
+        // The current page is internal
+            p = (page *)p->linear_search(min);
+        }
+        else {
+        // Found a leaf
+            p->linear_search_range(min, max, values, size);
+
+        break;
+        }
+    }
+}
+
+void btree::CalculateSapce(uint64_t &space) {
+    if(root != nullptr) {
+        ((page*)root)->CalculateSapce(space);
+    }
+}
+
+void btree::PrintInfo() {
+    // printf("This is fast_fair b+ tree.\n");
+    // printf("Node size is %lu, M path is %d.\n", sizeof(page), cardinality);
+    printf("Tree height is %d.\n", height);
 }
 
 void btree::printAll() {

@@ -11,6 +11,6 @@ class IndexTree {
 
 };
 
-extern char *index_tree; // 全局IndexTree index_tree, 初始为null
+// extern char *index_tree; // 全局IndexTree index_tree, 初始为null
 
 } // end namespace nnbtree

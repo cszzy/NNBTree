@@ -3,6 +3,4 @@
 
 namespace nnbtree {
 
-char *index_tree = nullptr;
-
 } // end namesapce nnbtree 

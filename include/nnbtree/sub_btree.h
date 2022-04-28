@@ -37,6 +37,8 @@
 
 #define MAX_SUBTREE_HEIGHT 2 // 子树最大高度
 
+static char *index_tree = nullptr;
+
 using entry_key_t = int64_t;
 
 pthread_mutex_t print_mtx;
@@ -148,7 +150,7 @@ private:
 public:
   friend class SubTree;
 
-  page(bool inpmem, uint32_t level = 0) {
+  page(bool inpmem, uint32_t level) {
     assert(sizeof(page) == PAGESIZE);
     hdr.level = level;
     records[0].ptr = NULL;
@@ -650,9 +652,9 @@ public:
       // create a new node
       page *sibling = nullptr;
       if (hdr.is_inpmem) {
-        sibling = new(true) page(hdr.level);
+        sibling = new(true) page(true, hdr.level);
       } else {
-        sibling = new(false) page(hdr.level);
+        sibling = new(false) page(false, hdr.level);
       }
       
       register int m = (int)ceil(num_entries / 2);
@@ -1045,7 +1047,7 @@ public:
 
       // Search keys with linear search
   void linear_search_range(entry_key_t min, entry_key_t max, 
-      std::vector<std::pair<uint64_t, uint64_t>> &result, int &size) {
+      std::vector<std::pair<entry_key_t, uint64_t>> &result, int &size) {
     int i, off = 0;
     uint8_t previous_switch_counter;
     page *current = this;
@@ -1294,7 +1296,7 @@ public:
 SubTree::SubTree() {
   // root = (char *)new page();
   // height = 1;
-  sub_root = (char *)new(true) page(true); // 第一个subtree在pmem中
+  sub_root = (char *)new(true) page(true, 0); // 第一个subtree在pmem中
   clflush((char *)sub_root, sizeof(page));
   height = 1;
   clflush((char *)this, sizeof(SubTree));
@@ -1303,7 +1305,7 @@ SubTree::SubTree() {
 
 SubTree::SubTree(page *root_) {
     if(root_ == nullptr) {
-      sub_root = (char *)new(true) page(true);
+      sub_root = (char *)new(true) page(true, 0);
       clflush((char *)sub_root, sizeof(page));
       height = 1;
       clflush((char *)this, sizeof(SubTree));
@@ -1458,6 +1460,41 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
     }
   }
 }
+
+
+void SubTree::btree_search_range(entry_key_t min, entry_key_t max, 
+    std::vector<std::pair<entry_key_t, uint64_t>> &result, int &size) {
+    page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+
+    while(p) {
+        if(p->hdr.leftmost_ptr != NULL) {
+        // The current page is internal
+            p = (page *)p->linear_search(min);
+        }
+        else {
+        // Found a leaf
+            p->linear_search_range(min, max, result, size);
+        break;
+        }
+    }
+}
+
+void SubTree::btree_search_range(entry_key_t min, entry_key_t max, void **values, int &size) {
+    page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+
+    while(p) {
+        if(p->hdr.leftmost_ptr != NULL) {
+        // The current page is internal
+            p = (page *)p->linear_search(min);
+        }
+        else {
+        // Found a leaf
+            p->linear_search_range(min, max, values, size);
+        break;
+        }
+    }
+}
+
 
 void SubTree::printAll() {
   pthread_mutex_lock(&print_mtx);

@@ -20,6 +20,7 @@ set(NNBTREE_HEAD_LIST
 
 set(NNBTREE_SRC
   src/index_btree.cc
+  src/environment.cc
 )
 
 add_library(nnbtree SHARED ${NNBTREE_SRC})
@@ -30,5 +31,6 @@ target_include_directories(nnbtree PUBLIC ${NNBTREE_HEAD_LIST})
 add_executable(simple_test tests/test.cc)
 target_link_libraries(simple_test nnbtree rt m)
 
+# 如何增加编译选项-DMIXED?
 add_executable(simple_test_mixed tests/test.cc)
 target_link_libraries(simple_test_mixed nnbtree rt m)
