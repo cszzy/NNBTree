@@ -11,11 +11,18 @@ set(CMAKE_CXX_STANDARD 17)
 # nnbtree shared library
 include_directories(
   include
+  include/nnbtree
+  include/fast_fair
 )
 
 set(NNBTREE_HEAD_LIST 
-  include/
+  include
   include/nnbtree
+)
+
+set(FAST_FAIR_HEAD_LIST 
+  include
+  include/fast_fair
 )
 
 set(NNBTREE_SRC
@@ -34,3 +41,9 @@ target_link_libraries(simple_test nnbtree rt m)
 # 如何增加编译选项-DMIXED?
 add_executable(simple_test_mixed tests/test.cc)
 target_link_libraries(simple_test_mixed nnbtree rt m)
+
+# microbench
+add_executable(microbench tests/micro_bench.cc)
+target_link_libraries(microbench nnbtree)
+target_include_directories(microbench PUBLIC ${FAST_FAIR_HEAD_LIST})
+add_test(microbench microbench)

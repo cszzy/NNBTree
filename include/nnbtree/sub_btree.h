@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <vector>
 
-#include "../nvm_alloc.h"
+#include "nvm_alloc.h"
 #include "statistics.h"
 #include "index_btree.h"
 
