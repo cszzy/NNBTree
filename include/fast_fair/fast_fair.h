@@ -31,7 +31,7 @@
 
 #include "nvm_alloc.h"
 
-#define PAGESIZE 256
+#define PAGESIZE 128
 
 #define CACHE_LINE_SIZE 64
 
@@ -40,17 +40,17 @@
 
 using entry_key_t = int64_t;
 
-pthread_mutex_t print_mtx;
-
 using namespace std;
 
-inline void clflush(char *data, int len) {
+namespace FastFair {
+
+static pthread_mutex_t print_mtx;
+
+static inline void clflush(char *data, int len) {
 #ifndef USE_MEM
     NVM::Mem_persist(data, len);
 #endif
 }
-
-namespace FastFair {
 
 // const size_t NVM_ValueSize = 256;
 void alloc_memalign(void **ret, size_t alignment, size_t size) {

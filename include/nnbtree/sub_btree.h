@@ -27,6 +27,7 @@
 #include "nvm_alloc.h"
 #include "statistics.h"
 #include "index_btree.h"
+#include "common.h"
 
 #define PAGESIZE 128
 
@@ -37,17 +38,17 @@
 
 #define MAX_SUBTREE_HEIGHT 2 // 子树最大高度
 
-static char *index_tree = nullptr;
-
 using entry_key_t = int64_t;
 
-pthread_mutex_t print_mtx;
+namespace nnbtree {
 
-inline void clflush(char *data, int len) {
+static char *index_tree_root = nullptr;
+
+static pthread_mutex_t print_mtx;
+
+static inline void clflush(char *data, int len) {
     NVM::Mem_persist(data, len);
 }
-
-namespace nnbtree {
 
 // const size_t NVM_ValueSize = 256;
 void alloc_memalign(void **ret, size_t alignment, size_t size) {
@@ -55,7 +56,7 @@ void alloc_memalign(void **ret, size_t alignment, size_t size) {
   posix_memalign(ret, alignment, size);
 #else
   *ret =  NVM::data_alloc->alloc(size);
-  assert(*ret);
+  p_assert(*ret, "mem/pmem alloc fail");
 #endif
 }
 
@@ -85,12 +86,18 @@ public:
   // zzy add
   SubTree(page *root);
   page *btree_search_leaf(entry_key_t);
-  void btree_search_range(entry_key_t, entry_key_t, std::vector<std::pair<entry_key_t, uint64_t>> &result, int &size); 
+  void btree_search_range(entry_key_t, entry_key_t, std::vector<std::pair<uint64_t, uint64_t>> &result, int &size); 
   void btree_search_range(entry_key_t, entry_key_t, void **values, int &size); 
   void PrintInfo();
   void CalculateSapce(uint64_t &space);
 
   friend class page;
+};
+
+enum PageType : uint8_t {
+  NVM_SUBTREE_PAGE,
+  DRAM_CACHETREE_PAGE,
+  DRAM_INDEXTREE_PAGE
 };
 
 class header {
@@ -101,7 +108,7 @@ private:
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?实际没有节点合并, 用不到
   int8_t last_index;      // 1 bytes // 指示最后条目的位置
-  uint8_t is_inpmem;      // 1 bytes // 指示这个页是在内存还是pmem
+  PageType page_type;      // 1 bytes // 指示page类型, 0: nvm_subtree_page, 1: dram_cachetree_page, 2: dram_indextree_page
   std::mutex *mtx;        // 8 bytes // 写独占
 
   friend class page;
@@ -150,16 +157,16 @@ private:
 public:
   friend class SubTree;
 
-  page(bool inpmem, uint32_t level) {
-    assert(sizeof(page) == PAGESIZE);
+  page(PageType page_type_, uint32_t level) {
+    p_assert(sizeof(page) == PAGESIZE, "class page size is not %d", PAGE_SIZE);
     hdr.level = level;
     records[0].ptr = NULL;
-    hdr.is_inpmem = inpmem;
+    hdr.page_type = page_type_;
   }
 
   // this is called when tree grows
-  page(bool inpmem, page *left, entry_key_t key, page *right, uint32_t level = 0) {
-    assert(sizeof(page) == PAGESIZE);
+  page(PageType page_type_, page *left, entry_key_t key, page *right, uint32_t level = 0) {
+    p_assert(sizeof(page) == PAGESIZE, "class page size is not %d", PAGE_SIZE);
     hdr.leftmost_ptr = left;
     hdr.level = level;
     records[0].key = key;
@@ -167,9 +174,9 @@ public:
     records[1].ptr = NULL;
 
     hdr.last_index = 0;
-    hdr.is_inpmem = inpmem;
+    hdr.page_type = page_type_;
 
-    if (hdr.is_inpmem) {
+    if (page_is_inpmem()) {
       clflush((char *)this, sizeof(page));
     }
   }
@@ -182,6 +189,10 @@ public:
       posix_memalign(&ret, 64, size);
     
     return ret;
+  }
+
+  inline bool page_is_inpmem() {
+    return hdr.page_type == PageType::NVM_SUBTREE_PAGE;
   }
 
   uint32_t GetLevel() {
@@ -244,7 +255,7 @@ public:
             ((((int)(remainder + sizeof(entry)) / CACHE_LINE_SIZE) == 1) &&
              ((remainder + sizeof(entry)) % CACHE_LINE_SIZE) != 0);
         if (do_flush) {
-          if (hdr.is_inpmem) {
+          if (page_is_inpmem()) {
             clflush((char *)records_ptr, CACHE_LINE_SIZE);
           }
         }
@@ -254,7 +265,7 @@ public:
     if (shift) {
       --hdr.last_index;
     //   zzy add
-      if (hdr.is_inpmem) {
+      if (page_is_inpmem()) {
         clflush((char *)&(hdr.last_index), sizeof(int16_t));
       }
     }
@@ -531,7 +542,7 @@ public:
       array_end->ptr = (char *)NULL;
 
       if (flush) {
-        if (hdr.is_inpmem) {
+        if (page_is_inpmem()) {
           clflush((char *)this, CACHE_LINE_SIZE);
         }
       }
@@ -540,7 +551,7 @@ public:
       records[*num_entries + 1].ptr = records[*num_entries].ptr; 
       if (flush) {
         if ((uint64_t) & (records[*num_entries + 1].ptr) % CACHE_LINE_SIZE == 0) {
-          if (hdr.is_inpmem) {
+          if (page_is_inpmem()) {
             clflush((char *)&(records[*num_entries + 1].ptr), sizeof(char *));
           }
         }
@@ -563,7 +574,7 @@ public:
                 ((((int)(remainder + sizeof(entry)) / CACHE_LINE_SIZE) == 1) &&
                  ((remainder + sizeof(entry)) % CACHE_LINE_SIZE) != 0);
             if (do_flush) {
-              if (hdr.is_inpmem) {
+              if (page_is_inpmem()) {
                 clflush((char *)records_ptr, CACHE_LINE_SIZE);
               }
               to_flush_cnt = 0;
@@ -576,7 +587,7 @@ public:
           records[i + 1].ptr = ptr;
 
           if (flush) {
-            if (hdr.is_inpmem) {
+            if (page_is_inpmem()) {
               clflush((char *)&records[i + 1], sizeof(entry));
             }
           }
@@ -589,7 +600,7 @@ public:
         records[0].key = key;
         records[0].ptr = ptr;
         if (flush) {
-          if (hdr.is_inpmem) {
+          if (page_is_inpmem()) {
             clflush((char *)&records[0], sizeof(entry));
           }
         }
@@ -599,7 +610,7 @@ public:
     if (update_last_index) {
       hdr.last_index = *num_entries;
       // zzy add
-      if (hdr.is_inpmem) {
+      if (page_is_inpmem()) {
         clflush((char *)&(hdr.last_index), sizeof(int16_t));
       }
     }
@@ -651,10 +662,10 @@ public:
       // overflow
       // create a new node
       page *sibling = nullptr;
-      if (hdr.is_inpmem) {
-        sibling = new(true) page(true, hdr.level);
+      if (page_is_inpmem()) {
+        sibling = new(true) page(PageType::NVM_SUBTREE_PAGE, hdr.level);
       } else {
-        sibling = new(false) page(false, hdr.level);
+        sibling = new(false) page(this->hdr.page_type, hdr.level);
       }
       
       register int m = (int)ceil(num_entries / 2);
@@ -676,12 +687,12 @@ public:
       }
 
       sibling->hdr.sibling_ptr = hdr.sibling_ptr;
-      if (hdr.is_inpmem) {
+      if (page_is_inpmem()) {
         clflush((char *)sibling, sizeof(page));
       }
       
       hdr.sibling_ptr = sibling;
-      if (hdr.is_inpmem) {
+      if (page_is_inpmem()) {
         clflush((char *)&hdr, sizeof(hdr));
       }
 
@@ -692,12 +703,12 @@ public:
         ++hdr.switch_counter;
       records[m].ptr = NULL;
 
-      if (hdr.is_inpmem) {
+      if (page_is_inpmem()) {
         clflush((char *)&records[m], sizeof(entry));
       }
 
       hdr.last_index = m - 1;
-      if (hdr.is_inpmem) {
+      if (page_is_inpmem()) {
         clflush((char *)&(hdr.last_index), sizeof(int16_t));
       }
       
@@ -716,49 +727,66 @@ public:
         ret = sibling;
       }
 
-      // Set a new root or insert the split key to the parent
-      if (bt->sub_root == (char *)this) { // only one node can update the root ptr
-        // zzy add
-        // 如果子树高度超过MAX_SUBTREE_HEIGHT
-          // 如果内存还没创建index_tree则创建
-          // 否则分裂subtree，插入index_tree
-        if (hdr.level >= MAX_SUBTREE_HEIGHT) {
-          if (index_tree == nullptr) {
-            index_tree = (char *)new(false) page(false, (page *)this, split_key, sibling, hdr.level + 1);
-            if (with_lock) {
-              hdr.mtx->unlock(); // Unlock the write lock
+      if (hdr.page_type == PageType::NVM_SUBTREE_PAGE) {
+        // Set a new root or insert the split key to the parent
+        if (bt->sub_root == (char *)this) { // only one node can update the root ptr
+          // zzy add
+          // 如果子树高度超过MAX_SUBTREE_HEIGHT
+            // 如果内存还没创建index_tree则创建
+            // 否则分裂subtree，插入index_tree
+          if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
+            if (index_tree_root == nullptr) {
+              index_tree_root = (char *)new(false) page(PageType::DRAM_INDEXTREE_PAGE, (page *)this, split_key, sibling, hdr.level + 1);
+              if (with_lock) {
+                hdr.mtx->unlock(); // Unlock the write lock
+              }
+              printf("generate index tree: %x\n", index_tree_root);
+            } else {
+              if (with_lock) {
+                hdr.mtx->unlock(); // Unlock the write lock
+              }
+              // 调整父节点
+              bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
             }
-            printf("generate index tree: %x\n", index_tree);
           } else {
+            page *new_root = new(true) page(PageType::NVM_SUBTREE_PAGE, (page *)this, split_key, sibling, hdr.level + 1);
+            bt->setNewRoot((char *)new_root);
+
             if (with_lock) {
               hdr.mtx->unlock(); // Unlock the write lock
             }
-            // 调整父节点
-            bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
           }
-        } else {
-          page *new_root = new(true) page(true, (page *)this, split_key, sibling, hdr.level + 1);
-          bt->setNewRoot((char *)new_root);
+          // page *new_root =
+          //     new page((page *)this, split_key, sibling, hdr.level + 1);
+          // bt->setNewRoot((char *)new_root);
 
+          // if (with_lock) {
+          //   hdr.mtx->unlock(); // Unlock the write lock
+          // }
+        } else {
           if (with_lock) {
             hdr.mtx->unlock(); // Unlock the write lock
           }
+          // 调整父节点
+          bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
         }
-        // page *new_root =
-        //     new page((page *)this, split_key, sibling, hdr.level + 1);
-        // bt->setNewRoot((char *)new_root);
-
-        // if (with_lock) {
-        //   hdr.mtx->unlock(); // Unlock the write lock
-        // }
+      } else if (hdr.page_type == PageType::DRAM_INDEXTREE_PAGE) {
+        // Set a new root or insert the split key to the parent
+        if (index_tree_root == (char *)this) { // only one node can update the root ptr
+          index_tree_root = (char *)new(false) page(PageType::DRAM_INDEXTREE_PAGE, (page *)this, split_key, sibling, hdr.level + 1);
+          if (with_lock) {
+            hdr.mtx->unlock(); // Unlock the write lock
+          }
+        } else {
+          if (with_lock) {
+            hdr.mtx->unlock(); // Unlock the write lock
+          }
+          // 调整父节点
+          bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
+        }
       } else {
-        if (with_lock) {
-          hdr.mtx->unlock(); // Unlock the write lock
-        }
-        // 调整父节点
-        bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
+        p_assert(false, "now only implement innvm subtree_page and indram indextree_page");
       }
-
       return ret;
     }
   }
@@ -1047,7 +1075,7 @@ public:
 
       // Search keys with linear search
   void linear_search_range(entry_key_t min, entry_key_t max, 
-      std::vector<std::pair<entry_key_t, uint64_t>> &result, int &size) {
+      std::vector<std::pair<uint64_t, uint64_t>> &result, int &size) {
     int i, off = 0;
     uint8_t previous_switch_counter;
     page *current = this;
@@ -1296,36 +1324,37 @@ public:
 SubTree::SubTree() {
   // root = (char *)new page();
   // height = 1;
-  sub_root = (char *)new(true) page(true, 0); // 第一个subtree在pmem中
+  sub_root = (char *)new(true) page(PageType::NVM_SUBTREE_PAGE, 0); // 第一个subtree在pmem中
   clflush((char *)sub_root, sizeof(page));
   height = 1;
   clflush((char *)this, sizeof(SubTree));
-  printf("[Fast-Fair]: root is %p, SubTree is %p.\n", sub_root, this);
+  printf("[nnbtree]: root is %p, SubTree is %p.\n", sub_root, this);
 }
 
 SubTree::SubTree(page *root_) {
     if(root_ == nullptr) {
-      sub_root = (char *)new(true) page(true, 0);
+      sub_root = (char *)new(true) page(PageType::NVM_SUBTREE_PAGE, 0);
       clflush((char *)sub_root, sizeof(page));
       height = 1;
       clflush((char *)this, sizeof(SubTree));
     } else {
       // not implement yet
-      assert(false);
+      p_assert(false, "recovery not implement yet");
       // root = (char *)root_;
       // height = root_->GetLevel() + 1;
     }
-    printf("[Fast-Fair]: root is %p, SubTree is %p, height is %d.\n", sub_root, this, height);
+    printf("[nnbtree]: root is %p, SubTree is %p, height is %d.\n", sub_root, this, height);
 }
 
 void SubTree::setNewRoot(char *new_root) {
   this->sub_root = (char *)new_root;
   clflush((char *)&(this->sub_root), sizeof(char *));
   ++height;
+  printf("setnewroot, height is %d\n", height);
 }
 
 char *SubTree::btree_search(entry_key_t key) {
-  page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+  page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
     p = (page *)p->linear_search(key);
@@ -1349,7 +1378,7 @@ char *SubTree::btree_search(entry_key_t key) {
 
 // insert the key in the leaf node
 void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
-  page *p = index_tree == nullptr ? (page *)sub_root : (page*)index_tree;
+  page *p = index_tree_root == nullptr ? (page *)sub_root : (page*)index_tree_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
     p = (page *)p->linear_search(key);
@@ -1363,7 +1392,7 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
 // store the key into the node at the given level
 void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
                                   uint32_t level) {
-  page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+  page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
   if (level > (p->hdr.level))
     return;
 
@@ -1376,7 +1405,7 @@ void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
 }
 
 void SubTree::btree_delete(entry_key_t key) {
-  page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+  page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
 
   while (p->hdr.leftmost_ptr != NULL) { // 遍历到叶
     p = (page *)p->linear_search(key);
@@ -1402,7 +1431,7 @@ void SubTree::btree_delete(entry_key_t key) {
 void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
                                   entry_key_t *deleted_key,
                                   bool *is_leftmost_node, page **left_sibling) {
-  page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+  page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
   if (level > (p->hdr.level))
     return;
 
@@ -1446,7 +1475,7 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
 // Function to search keys from "min" to "max"
 void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
                                unsigned long *buf) {
-  page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+  page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
 
   while (p) {
     if (p->hdr.leftmost_ptr != NULL) {
@@ -1463,8 +1492,8 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
 
 
 void SubTree::btree_search_range(entry_key_t min, entry_key_t max, 
-    std::vector<std::pair<entry_key_t, uint64_t>> &result, int &size) {
-    page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+    std::vector<std::pair<uint64_t, uint64_t>> &result, int &size) {
+    page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
 
     while(p) {
         if(p->hdr.leftmost_ptr != NULL) {
@@ -1480,7 +1509,7 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
 }
 
 void SubTree::btree_search_range(entry_key_t min, entry_key_t max, void **values, int &size) {
-    page *p = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+    page *p = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
 
     while(p) {
         if(p->hdr.leftmost_ptr != NULL) {
@@ -1495,11 +1524,16 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max, void **values
     }
 }
 
+void SubTree::PrintInfo() {
+    // printf("This is fast_fair b+ tree.\n");
+    // printf("Node size is %lu, M path is %d.\n", sizeof(page), cardinality);
+    printf("Tree height is %d.\n", height);
+}
 
 void SubTree::printAll() {
   pthread_mutex_lock(&print_mtx);
   int total_keys = 0;
-  page *leftmost = index_tree == nullptr ? (page *)sub_root : (page *)index_tree;
+  page *leftmost = index_tree_root == nullptr ? (page *)sub_root : (page *)index_tree_root;
   printf("root: %x\n", leftmost);
   do {
     page *sibling = leftmost;

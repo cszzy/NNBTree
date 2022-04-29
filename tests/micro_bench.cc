@@ -1,3 +1,4 @@
+// 单线程功能测试
 #include <iostream>
 #include <fstream>
 #include <cassert>
@@ -224,7 +225,7 @@ int main(int argc, char *argv[])
 
   int c;
   int opt_idx;
-  std::string dbName = "fastfair";
+  std::string dbName = "nnbtree";
   std::string load_file = "";
   while ((c = getopt_long(argc, argv, "t:s:dh", opts, &opt_idx)) != -1)
   {
@@ -323,6 +324,8 @@ int main(int argc, char *argv[])
   if (dbName == "fastfair")
   {
     db = new nnbtree::fastfairDB();
+  } else if (dbName == "nnbtree"){
+    db = new nnbtree::nnbtreeDB();
   } else {
     assert(false);
   }
