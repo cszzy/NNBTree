@@ -2,7 +2,7 @@ project(nnbtree)
 cmake_minimum_required(VERSION 3.0)
 
 # -march=native used to detect CPU flags and use corrosponding flush instruction
-set(CMAKE_CXX_FLAGS "-march=native -Wall -O0 -g")
+set(CMAKE_CXX_FLAGS "-march=native -Wall -g")
 
 # Require C++17
 set(CMAKE_CXX_STANDARD_REQUIRED on)

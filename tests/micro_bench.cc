@@ -1,4 +1,3 @@
-// 单线程功能测试
 #include <iostream>
 #include <fstream>
 #include <cassert>
@@ -18,9 +17,8 @@
 #include "util.h"
 #include "random.h"
 
-using nnbtree::Random;
-using nnbtree::Timer;
 using ycsbc::KvDB;
+using namespace nnbtree;
 
 struct operation
 {
@@ -71,7 +69,7 @@ std::vector<T> read_data_from_osm(
     const std::string load_file,
     T (*get_data)(const std::string &) = []
     { return static_cast<T>(0); },
-    const std::string output = "/home/wjy/generate_random_osm_longtitudes.dat")
+    const std::string output = "/home/zzy/dataset/generate_random_osm_longtitudes.dat")
 {
   std::vector<T> data;
   std::set<T> unique_keys;
@@ -121,7 +119,7 @@ std::vector<T> read_data_from_osm(
 
 template <typename T>
 std::vector<T> load_data_from_osm(
-    const std::string dataname = "/home/wjy/generate_random_osm_cellid.dat")
+    const std::string dataname = "/home/zzy/dataset/generate_random_osm_cellid.dat")
 {
   return util::load_data<T>(dataname);
 }
@@ -139,9 +137,9 @@ std::vector<uint64_t> generate_random_ycsb(size_t op_num)
                                      // for (size_t i = 0; i < op_num; ++i)
                                      //   std::swap(data[i], data[rnd.Next()]);
                                    });
-  const uint64_t ms = ns / 1e6;
+  // const uint64_t ms = ns / 1e6;
   // uint64_t size = data.size();
-  // std::ofstream out("/home/wjy/generate_random_ycsb_1000M.dat", std::ios::binary);
+  // std::ofstream out("/home/zzy/dataset/generate_random_ycsb_1000M.dat", std::ios::binary);
   // out.write(reinterpret_cast<char *>(&size), sizeof(uint64_t));
   // out.write(reinterpret_cast<char *>(data.data()), data.size() * sizeof(uint64_t));
   // out.close();
@@ -171,7 +169,7 @@ std::vector<uint64_t> generate_uniform_random(size_t op_num)
                                      }
                                    });
 
-  // const std::string output = "/home/wjy/generate_random_10uint32.dat";
+  // const std::string output = "/home/zzy/dataset/generate_random_10uint32.dat";
   // data.assign(unique_keys.begin(), unique_keys.end());
   // random_shuffle(data.begin(),data.end());
   // std::ofstream out(output, std::ios::binary);
@@ -203,7 +201,7 @@ void show_help(char *prog)
             << "    --help[-h]               show help" << std::endl;
 }
 
-int thread_num = 4;
+int thread_num = 1;
 size_t LOAD_SIZE = 10000000;
 size_t PUT_SIZE = 6000000;
 size_t GET_SIZE = 1000000;
@@ -225,7 +223,7 @@ int main(int argc, char *argv[])
 
   int c;
   int opt_idx;
-  std::string dbName = "nnbtree";
+  std::string dbName = "combotree";
   std::string load_file = "";
   while ((c = getopt_long(argc, argv, "t:s:dh", opts, &opt_idx)) != -1)
   {
@@ -300,19 +298,19 @@ int main(int argc, char *argv[])
     data_base = generate_random_ycsb(LOAD_SIZE + PUT_SIZE * 6);
     break;
   case 2:
-    data_base = load_data_from_osm<uint64_t>("/home/wjy/generate_random_osm_longtitudes.dat");
+    data_base = load_data_from_osm<uint64_t>("/home/zzy/dataset/generate_random_osm_longtitudes.dat");
     break;
   case 3:
-    data_base = load_data_from_osm<uint64_t>("/home/wjy/generate_random_osm_longlat.dat");
+    data_base = load_data_from_osm<uint64_t>("/home/zzy/dataset/generate_random_osm_longlat.dat");
     break;
   case 4:
-    data_base = load_data_from_osm<uint64_t>("/home/wjy/generate_random_10uint32.dat");
+    data_base = load_data_from_osm<uint64_t>("/home/zzy/dataset/generate_random_10uint32.dat");
     break;
   case 5:
-    data_base = load_data_from_osm<uint64_t>("/home/wjy/lognormal.dat");
+    data_base = load_data_from_osm<uint64_t>("/home/zzy/dataset/lognormal.dat");
     break;
   case 6:
-    data_base = load_data_from_osm<uint64_t>("/home/wjy/generate_random_ycsb.dat");
+    data_base = load_data_from_osm<uint64_t>("/home/zzy/dataset/generate_random_ycsb.dat");
     break;
   default:
     data_base = generate_uniform_random(LOAD_SIZE + PUT_SIZE * 8);
@@ -323,76 +321,106 @@ int main(int argc, char *argv[])
   KvDB *db = nullptr;
   if (dbName == "fastfair")
   {
-    db = new nnbtree::fastfairDB();
-  } else if (dbName == "nnbtree"){
-    db = new nnbtree::nnbtreeDB();
+    db = new fastfairDB();
+  } else if (dbName == "nnbtree") {
+    db = new nnbtreeDB();
   } else {
     assert(false);
   }
+  
   db->Init();
   Timer timer;
   uint64_t us_times;
   uint64_t load_pos = 0;
   std::cout << "Start run ...." << std::endl;
+  // {
+  //   int init_size = 1e3;
+  //   std::mt19937_64 gen_payload(std::random_device{}());
+  //   auto values = new std::pair<uint64_t, uint64_t>[init_size];
+  //   for (int i = 0; i < init_size; i++)
+  //   {
+  //     values[i].first = data_base[i];
+  //     values[i].second = static_cast<uint64_t>(gen_payload());
+  //   }
+  //   std::sort(values, values + init_size,
+  //             [](auto const &a, auto const &b)
+  //             { return a.first < b.first; });
+  //   db->Bulk_load(values, init_size);
+  //   load_pos = init_size;
+  // }
+  // if (dbName == "alex" && Loads_type == 5)
+  // {
+  //     //for alex lognormal
+  //     std::cout << "Start loading ...." << std::endl;
+  //     int init_size = 1e6;
+  //     auto values = new std::pair<uint64_t, uint64_t>[init_size];
+  //     for (int i = 0; i < init_size; i++)
+  //     {
+  //       values[i].first = data_base[i];
+  //       values[i].second = data_base[i];
+  //     }
+  //     std::sort(values, values + init_size,
+  //               [](auto const &a, auto const &b)
+  //               { return a.first < b.first; });
+  //     db->Bulk_load(values,init_size);
+  //     load_pos = init_size;
+  // } 
   {
-    // int init_size = 1e3;
-    // std::mt19937_64 gen_payload(std::random_device{}());
-    // auto values = new std::pair<uint64_t, uint64_t>[init_size];
-    // for (int i = 0; i < init_size; i++)
-    // {
-    //   values[i].first = data_base[i];
-    //   values[i].second = static_cast<uint64_t>(gen_payload());
-    // }
-    // std::sort(values, values + init_size,
-    //           [](auto const &a, auto const &b)
-    //           { return a.first < b.first; });
-    // db->Bulk_load(values, init_size);
-    // load_pos = init_size;
-  }
-  {
-      // //for alex lognormal
-      // std::cout << "Start loading ...." << std::endl;
-      // int init_size = 15*1e7;
-      // auto values = new std::pair<uint64_t, uint64_t>[init_size];
-      // for (int i = 0; i < init_size; i++)
-      // {
-      //   values[i].first = data_base[i];
-      //   values[i].second = data_base[i];
-      // }
-      // std::sort(values, values + init_size,
-      //           [](auto const &a, auto const &b)
-      //           { return a.first < b.first; });
-      // db->Bulk_load(values,init_size);
-      // load_pos = init_size;
-  } {
     // Load
     std::cout << "Start loading ...." << std::endl;
     util::FastRandom ranny(18);
     timer.Record("start");
-    for (load_pos; load_pos < LOAD_SIZE; load_pos++)
+    for (; load_pos < LOAD_SIZE; load_pos++)
     {
       db->Put(data_base[load_pos], (uint64_t)data_base[load_pos]);
+
+      // if (data_base[load_pos] == 93400878053 || data_base[load_pos] == 73254538949) {
+      //   std::cout << "getchar" << std::endl;
+      //   getchar();
+      // }
+
+      // uint64_t value = 0;
+      // db->Get(data_base[load_pos], value);
+      // if(value != data_base[load_pos]){
+      //   std::cout << "wrong get: " << data_base[load_pos] << std::endl;
+      //   getchar();
+      // }
+
       if ((load_pos + 1) % 10000000 == 0)
       {
         timer.Record("stop");
         us_times = timer.Microsecond("stop", "start");
-        std::cerr << "Operate: " << load_pos + 1 << std::endl;
+        std::cout << "Operate: " << load_pos + 1 << std::endl;
         // 用于统计load过程中的nvm size和nvm write
-        db->Info();
+        // db->Info();
         // 扩展性读写测试
-        std::cout << "[Metic-Read]: " << LOAD_SIZE << ": "
+        std::cout << "[Metic-Write]: " << LOAD_SIZE << ": "
               << "cost " << us_times / 1000000.0 << "s, "
               << "iops " << (double)(10000000) / (double)us_times * 1000000.0 << " ." << std::endl;
+        
+        vector<uint64_t> rand_pos;
+        for(uint64_t i = 0;i<1000000;i++){
+            rand_pos.push_back(ranny.RandUint32(0, load_pos - 1));
+        }
         timer.Clear();
         timer.Record("start");
         uint64_t value = 0;
+        int wrong_get = 0;
         for(uint64_t i = 0;i<1000000;i++){
-            uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
-            db->Get(data_base[op_seq], value);
+            // uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
+            if (data_base[rand_pos[i]] == 93400878053 || data_base[rand_pos[i]] == 73254538949) {
+              std::cout << "getchar" << std::endl;
+              getchar();
+            }
+            db->Get(data_base[rand_pos[i]], value);
+            if(value != data_base[rand_pos[i]]){
+              wrong_get++;
+            }
         }
         timer.Record("stop");
         us_times = timer.Microsecond("stop", "start");
-        std::cout << "[Metic-Write]: " << LOAD_SIZE << ": "
+        std::cout << "wrong get: " << wrong_get << std::endl;
+        std::cout << "[Metic-Read]: " << LOAD_SIZE << ": "
               << "cost " << us_times / 1000000.0 << "s, "
               << "iops " << (double)(1000000) / (double)us_times * 1000000.0 << " ." << std::endl;
         timer.Clear();
@@ -408,12 +436,12 @@ int main(int argc, char *argv[])
               << "cost " << us_times / 1000000.0 << "s, "
               << "iops " << (double)(LOAD_SIZE) / (double)us_times * 1000000.0 << " ." << std::endl;
   }
-  db->Info();
+  // db->Info();
   // us_times = timer.Microsecond("stop", "start");
   // timer.Record("start");
   // Different insert_ration
-  std::vector<float> insert_ratios = {0};
-  // std::vector<float> insert_ratios = {0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0};
+  // std::vector<float> insert_ratios = {0};
+  std::vector<float> insert_ratios = {0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0};
   float insert_ratio = 0;
   util::FastRandom ranny(18);
   std::cout << "Start testing ...." << std::endl;
@@ -424,6 +452,12 @@ int main(int argc, char *argv[])
     insert_ratio = insert_ratios[i];
     db->Begin_trans();
     std::cout << "Data loaded: " << load_pos << std::endl;
+    
+
+    vector<uint64_t> rand_pos;
+    for(uint64_t i = 0;i<GET_SIZE;i++){
+        rand_pos.push_back(ranny.RandUint32(0, load_pos - 1));
+    }
     timer.Clear();
     timer.Record("start");
     for (uint64_t i = 0; i < GET_SIZE; i++)
@@ -435,9 +469,9 @@ int main(int argc, char *argv[])
       }
       else
       {
-        uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
-        db->Get(data_base[op_seq], value);
-        if(value != data_base[op_seq]){
+        // uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
+        db->Get(data_base[rand_pos[i]], value);
+        if(value != data_base[rand_pos[i]]){
           wrong_get++;
         }
       }
@@ -450,47 +484,47 @@ int main(int argc, char *argv[])
               << "iops " << (double)(GET_SIZE) / (double)us_times * 1000000.0 << " ." << std::endl;
   }
 
-  //scan
-  // uint64_t total_scan_size = 400000000;
-  // std::vector<int> scan_size = {100};
-  // for (auto scan : scan_size)
-  // {
-  //   timer.Clear();
-  //   timer.Record("start");
-  //   uint64_t scan_times = std::min(total_scan_size / scan, load_pos);
-  //   for (int i = 0; i < scan_times; ++i)
-  //   {
-  //     if(i%1000000 == 0){
-  //       std::cout << "scan times:" << scan_times << std::endl;
-  //     }
-  //     uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
-  //     std::vector<std::pair<uint64_t, uint64_t>> results;
-  //     db->Scan(data_base[op_seq], scan, results);
-  //   }
-  //   timer.Record("stop");
-  //   us_times = timer.Microsecond("stop", "start");
-  //   std::cout << "[Metic-Operate]: Scan " << scan << ": "
-  //             << "cost " << us_times / 1000000.0 << "s, "
-  //             << "iops " << (double)(scan_times) / (double)us_times * 1000000.0 << " ." << std::endl;
-  // }
+  // scan
+  uint64_t total_scan_size = 400000000;
+  std::vector<int> scan_size = {100};
+  for (auto scan : scan_size)
+  {
+    timer.Clear();
+    timer.Record("start");
+    uint64_t scan_times = std::min(total_scan_size / scan, load_pos);
+    for (int i = 0; i < scan_times; ++i)
+    {
+      if(i%1000000 == 0){
+        std::cout << "scan times:" << scan_times << std::endl;
+      }
+      uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
+      std::vector<std::pair<uint64_t, uint64_t>> results;
+      db->Scan(data_base[op_seq], scan, results);
+    }
+    timer.Record("stop");
+    us_times = timer.Microsecond("stop", "start");
+    std::cout << "[Metic-Operate]: Scan " << scan << ": "
+              << "cost " << us_times / 1000000.0 << "s, "
+              << "iops " << (double)(scan_times) / (double)us_times * 1000000.0 << " ." << std::endl;
+  }
 
-  //delete
-  // uint64_t DELETE_SIZE = 10000000;
-  // timer.Clear();
-  // timer.Record("start");
-  // for (int i = 0; i < DELETE_SIZE; ++i)
-  // {
-  //   if(i%1000000 == 0){
-  //       std::cout << "delete times:" << i << std::endl;
-  //     }
-  //   uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
-  //   db->Delete(data_base[op_seq]);
-  // }
-  // timer.Record("stop");
-  // us_times = timer.Microsecond("stop", "start");
-  // std::cout << "[Metic-Operate]: Delete " << DELETE_SIZE << ": "
-  //           << "cost " << us_times / 1000000.0 << "s, "
-  //           << "iops " << (double)(DELETE_SIZE) / (double)us_times * 1000000.0 << " ." << std::endl;
+  // delete
+  uint64_t DELETE_SIZE = 10000000;
+  timer.Clear();
+  timer.Record("start");
+  for (int i = 0; i < DELETE_SIZE; ++i)
+  {
+    if(i%1000000 == 0){
+        std::cout << "delete times:" << i << std::endl;
+      }
+    uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
+    db->Delete(data_base[op_seq]);
+  }
+  timer.Record("stop");
+  us_times = timer.Microsecond("stop", "start");
+  std::cout << "[Metic-Operate]: Delete " << DELETE_SIZE << ": "
+            << "cost " << us_times / 1000000.0 << "s, "
+            << "iops " << (double)(DELETE_SIZE) / (double)us_times * 1000000.0 << " ." << std::endl;
   
   
   delete db;

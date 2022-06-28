@@ -38,7 +38,7 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-using entry_key_t = int64_t;
+using entry_key_t = uint64_t;
 
 using namespace std;
 
@@ -661,8 +661,8 @@ public:
 
       page *ret;
 
-      // insert the key
-    //   zzy add
+    // insert the key
+    // zzy add
     // NVM::const_stat.AddCompare();
       if (key < split_key) {
         insert_key(key, right, &num_entries);

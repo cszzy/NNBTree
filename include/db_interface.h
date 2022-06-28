@@ -10,7 +10,7 @@
 #include <future>
 #include "ycsb/ycsb-c.h"
 
-#include "nnbtree/sub_btree.h"
+#include "nnbtree/nnbtree_common.h"
 #include "fast_fair/fast_fair.h"
 #include "nvm_alloc.h"
 
@@ -55,16 +55,19 @@ void Bulk_load(const std::pair<uint64_t, uint64_t> data[], int size)
 void Close()
 {
 }
+
 int Put(uint64_t key, uint64_t value)
 {
     tree_->btree_insert(key, (char *)value);
     return 1;
 }
+
 int Get(uint64_t key, uint64_t &value)
 {
     value = (uint64_t)tree_->btree_search(key);
     return 1;
 }
+
 int Update(uint64_t key, uint64_t value)
 {
     tree_->btree_delete(key);
@@ -83,6 +86,7 @@ int Scan(uint64_t start_key, int len, std::vector<std::pair<uint64_t, uint64_t>>
     tree_->btree_search_range(start_key, UINT64_MAX, results, len);
     return 1;
 }
+
 void PrintStatic()
 {
     NVM::show_stat();
@@ -96,7 +100,7 @@ class nnbtreeDB : public ycsbc::KvDB
 {
 typedef uint64_t KEY_TYPE;
 typedef uint64_t PAYLOAD_TYPE;
-typedef nnbtree::SubTree btree_t;
+typedef nnbtree::NNBTree btree_t;
 
 public:
 nnbtreeDB() : tree_(nullptr) {}
@@ -131,16 +135,19 @@ void Bulk_load(const std::pair<uint64_t, uint64_t> data[], int size)
 void Close()
 {
 }
+
 int Put(uint64_t key, uint64_t value)
 {
     tree_->btree_insert(key, (char *)value);
     return 1;
 }
+
 int Get(uint64_t key, uint64_t &value)
 {
-    value = (uint64_t)tree_->btree_search(key);
+    value = (uint64_t)(tree_->btree_search(key));
     return 1;
 }
+
 int Update(uint64_t key, uint64_t value)
 {
     tree_->btree_delete(key);
