@@ -9,7 +9,7 @@
     // 同时subtree也要进行缓存,淘汰和同步
     // 注意: fast_fair虽然实现了删除时的节点合并，但是为了性能实际并没有合并
 
-#include "nnbtree_common.h"
+#include "nnbtree.h"
 
 namespace nnbtree {
 

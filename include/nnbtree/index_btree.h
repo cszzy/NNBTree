@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nnbtree_common.h"
+#include "nnbtree.h"
 
 // IndexTree
     // 和concurrent fast_fair一致，不同之处在于不需要clflush+mfence

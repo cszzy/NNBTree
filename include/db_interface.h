@@ -10,7 +10,7 @@
 #include <future>
 #include "ycsb/ycsb-c.h"
 
-#include "nnbtree/nnbtree_common.h"
+#include "nnbtree/nnbtree.h"
 #include "fast_fair/fast_fair.h"
 #include "nvm_alloc.h"
 

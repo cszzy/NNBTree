@@ -91,7 +91,7 @@ function Run() {
     rm -rf /mnt/AEP0/*
     Loadname="longlat-400m"
     date | tee microbench-${dbname}-${Loadname}.txt
-    gdb --args \
+    # gdb --args \
     numactl --cpubind=0 --membind=0 ${BUILDDIR}/microbench --dbname ${dbname} --load-size ${loadnum} \
     --put-size ${opnum} --get-size ${opnum} --workload ${WorkLoad} \
     --loadstype 3 -t $thread | tee -a microbench-${dbname}-${Loadname}.txt

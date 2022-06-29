@@ -398,22 +398,22 @@ int main(int argc, char *argv[])
               << "cost " << us_times / 1000000.0 << "s, "
               << "iops " << (double)(10000000) / (double)us_times * 1000000.0 << " ." << std::endl;
         
-        vector<uint64_t> rand_pos;
-        for(uint64_t i = 0;i<1000000;i++){
-            rand_pos.push_back(ranny.RandUint32(0, load_pos - 1));
-        }
+        // vector<uint64_t> rand_pos;
+        // for(uint64_t i = 0;i<1000000;i++){
+        //     rand_pos.push_back(ranny.RandUint32(0, load_pos - 1));
+        // }
         timer.Clear();
         timer.Record("start");
         uint64_t value = 0;
         int wrong_get = 0;
-        for(uint64_t i = 0;i<1000000;i++){
+        for(uint64_t i = 0;i<10000000;i++){
             // uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
-            if (data_base[rand_pos[i]] == 93400878053 || data_base[rand_pos[i]] == 73254538949) {
-              std::cout << "getchar" << std::endl;
-              getchar();
-            }
-            db->Get(data_base[rand_pos[i]], value);
-            if(value != data_base[rand_pos[i]]){
+            // if (data_base[rand_pos[i]] == 93400878053 || data_base[rand_pos[i]] == 73254538949) {
+            //   std::cout << "getchar" << std::endl;
+            //   getchar();
+            // }
+            db->Get(data_base[i], value);
+            if(value != data_base[i]){
               wrong_get++;
             }
         }
