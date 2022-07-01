@@ -19,6 +19,8 @@
 #include "statistics.h"
 #include "common.h"
 
+#define SUBTREE_INNER_LOCK
+
 #define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64

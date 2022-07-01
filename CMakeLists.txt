@@ -2,7 +2,7 @@ project(nnbtree)
 cmake_minimum_required(VERSION 3.0)
 
 # -march=native used to detect CPU flags and use corrosponding flush instruction
-set(CMAKE_CXX_FLAGS "-march=native -Wall -O3")
+set(CMAKE_CXX_FLAGS "-march=native -Wall -g")
 
 # Require C++17
 set(CMAKE_CXX_STANDARD_REQUIRED on)
@@ -47,3 +47,9 @@ add_executable(microbench tests/micro_bench.cc)
 target_link_libraries(microbench nnbtree)
 target_include_directories(microbench PUBLIC ${FAST_FAIR_HEAD_LIST})
 add_test(microbench microbench)
+
+# multibench
+add_executable(multibench tests/multi_bench.cc)
+target_link_libraries(multibench nnbtree)
+target_include_directories(multibench PUBLIC ${FAST_FAIR_HEAD_LIST})
+add_test(multibench multibench)
