@@ -223,7 +223,7 @@ int main(int argc, char *argv[])
 
   int c;
   int opt_idx;
-  std::string dbName = "combotree";
+  std::string dbName = "nnbtree";
   std::string load_file = "";
   while ((c = getopt_long(argc, argv, "t:s:dh", opts, &opt_idx)) != -1)
   {
@@ -374,18 +374,6 @@ int main(int argc, char *argv[])
     {
       db->Put(data_base[load_pos], (uint64_t)data_base[load_pos]);
 
-      // if (data_base[load_pos] == 93400878053 || data_base[load_pos] == 73254538949) {
-      //   std::cout << "getchar" << std::endl;
-      //   getchar();
-      // }
-
-      // uint64_t value = 0;
-      // db->Get(data_base[load_pos], value);
-      // if(value != data_base[load_pos]){
-      //   std::cout << "wrong get: " << data_base[load_pos] << std::endl;
-      //   getchar();
-      // }
-
       if ((load_pos + 1) % 10000000 == 0)
       {
         timer.Record("stop");
@@ -398,22 +386,18 @@ int main(int argc, char *argv[])
               << "cost " << us_times / 1000000.0 << "s, "
               << "iops " << (double)(10000000) / (double)us_times * 1000000.0 << " ." << std::endl;
         
-        // vector<uint64_t> rand_pos;
-        // for(uint64_t i = 0;i<1000000;i++){
-        //     rand_pos.push_back(ranny.RandUint32(0, load_pos - 1));
-        // }
+        vector<uint64_t> rand_pos;
+        const int readnum = 1000000;
+        for(uint64_t i = 0;i < readnum;i++){
+            rand_pos.push_back(ranny.RandUint32(0, load_pos - 1));
+        }
         timer.Clear();
         timer.Record("start");
         uint64_t value = 0;
         int wrong_get = 0;
-        for(uint64_t i = 0;i<10000000;i++){
-            // uint64_t op_seq = ranny.RandUint32(0, load_pos - 1);
-            // if (data_base[rand_pos[i]] == 93400878053 || data_base[rand_pos[i]] == 73254538949) {
-            //   std::cout << "getchar" << std::endl;
-            //   getchar();
-            // }
-            db->Get(data_base[i], value);
-            if(value != data_base[i]){
+        for(uint64_t i = 0; i < readnum; i++){
+            db->Get(data_base[rand_pos[i]], value);
+            if(value != data_base[rand_pos[i]]){
               wrong_get++;
             }
         }
@@ -440,8 +424,8 @@ int main(int argc, char *argv[])
   // us_times = timer.Microsecond("stop", "start");
   // timer.Record("start");
   // Different insert_ration
-  // std::vector<float> insert_ratios = {0};
-  std::vector<float> insert_ratios = {0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0};
+  std::vector<float> insert_ratios = {0, 1.0};
+  // std::vector<float> insert_ratios = {0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0};
   float insert_ratio = 0;
   util::FastRandom ranny(18);
   std::cout << "Start testing ...." << std::endl;

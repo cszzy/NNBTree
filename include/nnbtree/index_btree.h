@@ -22,7 +22,7 @@ IndexTree::IndexTree(Page *page_, uint32_t level_) {
 void IndexTree::setNewRoot(char *new_root) {
   this->root = new_root;
   ++height;
-  printf("setnewroot, height is %d\n", height);
+  printf("[indextree] setnewroot, height is %d\n", height);
 }
 
 char *IndexTree::btree_search(entry_key_t key) {
@@ -32,7 +32,7 @@ char *IndexTree::btree_search(entry_key_t key) {
     p = (Page *)p->linear_search(key);
   }
 
-  SubTree *t = (SubTree*)p->linear_search(key);
+  SubTree *t = (SubTree*)(p->linear_search(key));
 
   return t->btree_search(key);
 }

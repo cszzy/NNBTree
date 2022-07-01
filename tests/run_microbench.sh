@@ -126,7 +126,7 @@ function Run() {
 
     rm -rf /mnt/AEP0/*
     Loadname="longtitude-200m"
-    loadnum=250000000
+    loadnum=200000000
     date | tee microbench-${dbname}-${Loadname}.txt
     LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes numactl --cpubind=0 --membind=0 ${BUILDDIR}/microbench --dbname ${dbname} --load-size ${loadnum} \
     --put-size ${opnum} --get-size ${opnum} --workload ${WorkLoad} \
@@ -190,7 +190,7 @@ function main() {
 
 # main xindex 400000000 10000000 100000 1
 # main pgm 400000000 10000000 100000 1
-# main fastfair 400000000 10000000 100000 1
+main fastfair 400000000 10000000 100000 1
 # main alex 400000000 10000000 100000 1
 # main lipp 400000000 10000000 100000 1
 

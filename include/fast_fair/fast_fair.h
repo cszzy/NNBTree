@@ -31,7 +31,7 @@
 
 #include "nvm_alloc.h"
 
-#define PAGESIZE 128
+#define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
 
@@ -1319,12 +1319,13 @@ void btree::btree_delete(entry_key_t key) {
       break;
   }
 
-  if (p) {
+  if (p && t) {
     if (!p->remove(this, key)) {
       btree_delete(key);
     }
   } else {
-    printf("not found the key to delete %lu\n", key);
+    // printf("not found the key to delete %lu\n", key);
+    ;
   }
 }
 

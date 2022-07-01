@@ -46,7 +46,7 @@ void SubTree::setNewRoot(char *new_root) {
   this->sub_root = (char *)new_root;
   clflush((char *)&(this->sub_root), sizeof(char *));
   ++height;
-  printf("setnewroot, height is %d\n", height);
+  printf("[subtree] setnewroot, height is %d\n", height);
 }
 
 char *SubTree::btree_search(entry_key_t key) {
@@ -116,12 +116,12 @@ void SubTree::btree_delete(entry_key_t key) {
       break;
   }
 
-  if (p) {
+  if (p && t) {
     if (!p->remove(this, key)) {
       btree_delete(key);
     }
   } else {
-    printf("not found the key to delete %lu\n", key);
+    // printf("not found the key to delete %lu\n", key);
   }
 }
 

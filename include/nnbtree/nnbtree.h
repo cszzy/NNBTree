@@ -19,7 +19,7 @@
 #include "statistics.h"
 #include "common.h"
 
-#define PAGESIZE 128
+#define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
 
@@ -221,6 +221,7 @@ public:
     leftmost_ptr = NULL;
     sibling_ptr = NULL;
     switch_counter = 0;
+    level = 0;
     last_index = -1;
     is_deleted = false;
   }
@@ -284,9 +285,9 @@ public:
   }
 
   // this is called when add new subtree
-  Page(PageType page_type_, Page *left, entry_key_t key, SubTree *right, uint32_t level = 0) {
+  Page(PageType page_type_, SubTree *left, entry_key_t key, SubTree *right, uint32_t level = 0) {
     p_assert(sizeof(Page) == PAGESIZE, "class Page size is not %d", PAGE_SIZE);
-    hdr.leftmost_ptr = left;
+    hdr.leftmost_ptr = (Page *)left;
     hdr.level = level;
     records[0].key = key;
     records[0].ptr = (char *)right;
@@ -869,7 +870,8 @@ public:
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling);
             if (!(index_tree_root->has_hasindextree())) {
-              Page *index_root_page = new(false) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, (Page *)this, split_key, sibling_subtree, hdr.level + 1);
+              // assert(bt);
+              Page *index_root_page = new(false) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
               IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
               index_tree_root->set_indextree(indextree_);
               if (with_lock) {
