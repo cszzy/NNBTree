@@ -13,41 +13,43 @@ function Run() {
     Loadname="ycsb-400m"
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-
-    sleep 60
+    echo "----------------"
+    sleep 30
 
     rm -rf /mnt/AEP0/*
     Loadname="longlat-400m"
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-
-    sleep 60
+    echo "----------------"
+    sleep 30
 
     rm -rf /mnt/AEP0/*
-    Loadname="longtitudes-400m"
-    loadnum=300000000
+    Loadname="longtitudes-200m"
+    loadnum=200000000
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 5 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-
-    sleep 60
+    echo "----------------"
+    sleep 30
 
     rm -rf /mnt/AEP0/*
     Loadname="lognormal-150m"
     loadnum=120000000
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 6 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    echo "----------------"
+    sleep 30
 }
 
 # DBName: combotree fastfair pgm xindex alex
@@ -66,7 +68,7 @@ opnum=10000000
 scansize=4000000
 # thread=4
 
-for thread in 4
+for thread in 2
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done

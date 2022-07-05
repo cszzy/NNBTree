@@ -15,14 +15,14 @@ namespace nnbtree {
 IndexTree::IndexTree(Page *page_, uint32_t level_) {
   root = (char *)page_;
   height = level_ + 1;
-  printf("[nnbtree]: indextree root is %p, indextree is %p, height is %d\n", root, this, height);
+  std::cout << "[nnbtree]: indextree root is " << (void*)root << " , indextree is " << this << " , height is " << height << std::endl << std::flush;
 }
 
 
 void IndexTree::setNewRoot(char *new_root) {
   this->root = new_root;
   ++height;
-  printf("[indextree] setnewroot, height is %d\n", height);
+  std::cout << "[indextree] setnewroot, height is " << height << std::endl << std::flush;
 }
 
 char *IndexTree::btree_search(entry_key_t key) {
@@ -40,13 +40,16 @@ char *IndexTree::btree_search(entry_key_t key) {
 // XXX: 搜索时indextree最后一层应该指向subtree，需要修改结构
 // insert the key in the leaf node
 void IndexTree::btree_insert(entry_key_t key, char *right) { // need to be string
+begin:
   Page *p = (Page *)root;
 
   while (p->hdr.page_type != PageType::INDEXTREE_LAST_LEVEL_PAGE) {
     p = (Page *)p->linear_search(key);
   }
 
-  SubTree *t = (SubTree*)p->linear_search(key);
+  SubTree *t = (SubTree*)(p->linear_search(key));
+  if ((Page*)t == p->hdr.sibling_ptr)
+    goto begin;
 
   t->btree_insert(key, right);
 }
@@ -61,7 +64,8 @@ void IndexTree::btree_insert_internal(char *left, entry_key_t key, char *right,
   while (p->hdr.level > level)
     p = (Page *)p->linear_search(key);
 
-  if (!p->store(this, NULL, key, right, true, true)) {
+  // p_assert(p->hdr.page_type == PageType::INDEXTREE_LAST_LEVEL_PAGE, "should not be false");
+  if (!p->store(this, NULL, key, right, false, true)) {
     btree_insert_internal(left, key, right, level);
   }
 }
@@ -90,11 +94,11 @@ void IndexTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level
     p = (Page *)p->linear_search(key);
   }
 
-  p->hdr.mtx->lock();
+  p->hdr.mtx.lock();
 
   if ((char *)p->hdr.leftmost_ptr == ptr) {
     *is_leftmost_node = true;
-    p->hdr.mtx->unlock();
+    p->hdr.mtx.unlock();
     return;
   }
 
@@ -120,7 +124,7 @@ void IndexTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level
     }
   }
 
-  p->hdr.mtx->unlock();
+  p->hdr.mtx.unlock();
 }
 
 // Function to search keys from "min" to "max"

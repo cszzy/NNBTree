@@ -62,6 +62,31 @@ void alloc_memalign(void **ret, size_t alignment, size_t size) {
 #endif
 }
 
+class __attribute__((aligned(64))) Spinlock {
+  public:
+  Spinlock() = default;
+  Spinlock(const Spinlock&) = delete;
+  Spinlock& operator= (const Spinlock&) = delete;
+  ~Spinlock() {std::cout << "spinlock " << this << "destructed" << std::endl << std::flush; }
+  void lock() {
+      // bool lock = false;
+      while (flag.test_and_set(std::memory_order_acquire)) {
+          // if (log_lock) {
+          //     if (lock == false) {
+          //         lock = true;
+          //         lock_times++;
+          //     }
+          // }
+      }
+  }
+
+  void unlock() { flag.clear(std::memory_order_release); }
+
+  private:
+  std::atomic_flag flag = ATOMIC_FLAG_INIT;
+  char padding[63];
+};
+
 class page;
 
 class btree {
@@ -101,14 +126,16 @@ private:
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?
   int16_t last_index;     // 2 bytes // 指示最后条目的位置
-  std::mutex *mtx;        // 8 bytes // 写独占
+  // std::mutex *mtx;        // 8 bytes // 写独占
+  Spinlock *mtx;
 
   friend class page;
   friend class btree;
 
 public:
   header() {
-    mtx = new std::mutex();
+    // mtx = new std::mutex();
+    mtx = new Spinlock();
 
     leftmost_ptr = NULL;
     sibling_ptr = NULL;
@@ -279,7 +306,7 @@ public:
     }
 
     if (!only_rebalance) {
-      register int num_entries_before = count(); 
+      int num_entries_before = count(); 
 
       // This node is root
       if (this == (page *)bt->root) {
@@ -293,7 +320,7 @@ public:
         }
 
         // Remove the key from this node
-        bool ret = remove_key(key);
+        remove_key(key);
 
         if (with_lock) {
           hdr.mtx->unlock();
@@ -356,8 +383,8 @@ public:
         left_sibling = left_sibling->hdr.sibling_ptr;
     }
 
-    register int num_entries = count();
-    register int left_num_entries = left_sibling->count();
+    int num_entries = count();
+    int left_num_entries = left_sibling->count();
 
     // Merge or Redistribution
     int total_num_entries = num_entries + left_num_entries;
@@ -367,7 +394,7 @@ public:
     entry_key_t parent_key;
 
     if (total_num_entries > cardinality - 1) { // Redistribution
-      register int m = (int)ceil(total_num_entries / 2);
+      int m = (int)ceil(total_num_entries / 2);
 
       if (num_entries < left_num_entries) { // left -> right
         if (hdr.leftmost_ptr == nullptr) {
@@ -607,7 +634,7 @@ public:
       }
     }
 
-    register int num_entries = count();
+    int num_entries = count();
 
     // FAST
     if (num_entries < cardinality - 1) { // no need to split
@@ -622,7 +649,7 @@ public:
       // overflow
       // create a new node
       page *sibling = new page(hdr.level);
-      register int m = (int)ceil(num_entries / 2);
+      int m = (int)ceil(num_entries / 2);
       entry_key_t split_key = records[m].key;
 
       // migrate half of keys into the sibling
@@ -928,9 +955,9 @@ public:
   // print a node
   void print() {
     if (hdr.leftmost_ptr == NULL)
-      printf("[%d] leaf %x \n", this->hdr.level, this);
+      printf("[%d] leaf %p \n", this->hdr.level, this);
     else
-      printf("[%d] internal %x \n", this->hdr.level, this);
+      printf("[%d] internal %p \n", this->hdr.level, this);
     printf("last_index: %d\n", hdr.last_index);
     printf("switch_counter: %d\n", hdr.switch_counter);
     printf("search direction: ");
@@ -940,12 +967,12 @@ public:
       printf("<-\n");
 
     if (hdr.leftmost_ptr != NULL)
-      printf("%x ", hdr.leftmost_ptr);
+      printf("%p ", hdr.leftmost_ptr);
 
     for (int i = 0; records[i].ptr != NULL; ++i)
-      printf("%ld,%x ", records[i].key, records[i].ptr);
+      printf("%ld,%p ", records[i].key, records[i].ptr);
 
-    printf("%x ", hdr.sibling_ptr);
+    printf("%p ", hdr.sibling_ptr);
 
     printf("\n");
   }
@@ -1269,7 +1296,7 @@ char *btree::btree_search(entry_key_t key) {
   }
 
   if (!t) {
-    printf("NOT FOUND %lu, t = %x\n", key, t);
+    printf("NOT FOUND %lu, t = %p\n", key, t);
     return NULL;
   }
 
@@ -1444,7 +1471,7 @@ void btree::printAll() {
   pthread_mutex_lock(&print_mtx);
   int total_keys = 0;
   page *leftmost = (page *)root;
-  printf("root: %x\n", root);
+  printf("root: %p\n", root);
   do {
     page *sibling = leftmost;
     while (sibling) {

@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
   nnbtree::SubTree *bt;
   bt = new nnbtree::SubTree();
 
-  struct timespec start, end, tmp;
+  struct timespec start, end;
 
   // Reading data
   entry_key_t *keys = new entry_key_t[numData];

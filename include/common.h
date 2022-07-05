@@ -130,8 +130,8 @@ static inline char *strdump(const char *s)
 }
 static inline unsigned long str_hash(const char *s, int len)
 {
-	register unsigned long res = 0;
-	register int i;
+	unsigned long res = 0;
+	int i;
 	for (i = 0; i < len; i++)
 	{
 		res = res * 131 + s[i];

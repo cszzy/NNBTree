@@ -19,8 +19,6 @@
 #include "statistics.h"
 #include "common.h"
 
-#define SUBTREE_INNER_LOCK
-
 #define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
@@ -34,6 +32,31 @@ using entry_key_t = uint64_t;
 
 namespace nnbtree {
 
+class Spinlock {
+  public:
+  Spinlock() : flag(ATOMIC_FLAG_INIT) {};
+  Spinlock(const Spinlock&) = delete;
+  Spinlock& operator= (const Spinlock&) = delete;
+  ~Spinlock() {std::cout << "spinlock " << this << "destructed" << std::endl << std::flush; }
+  void lock() {
+      // bool lock = false;
+      while (flag.test_and_set(std::memory_order_acquire)) {
+          // if (log_lock) {
+          //     if (lock == false) {
+          //         lock = true;
+          //         lock_times++;
+          //     }
+          // }
+      }
+  }
+
+  void unlock() { flag.clear(std::memory_order_release); }
+
+  private:
+  std::atomic_flag flag{ATOMIC_FLAG_INIT};
+  char padding[63];
+};
+
 static inline void clflush(char *data, int len) {
     NVM::Mem_persist(data, len);
 }
@@ -41,7 +64,8 @@ static inline void clflush(char *data, int len) {
 // const size_t NVM_ValueSize = 256;
 static inline void alloc_memalign(void **ret, size_t alignment, size_t size) {
 #ifdef USE_MEM
-  posix_memalign(ret, alignment, size);
+  int res = posix_memalign(ret, alignment, size);
+  p_assert(res == 0, "mem alloc fail");
 #else
   *ret =  NVM::data_alloc->alloc(size);
   p_assert(*ret, "mem/pmem alloc fail");
@@ -54,7 +78,6 @@ class SubTree {
 private:
   int height;
   // char *root; // 整个B+树的根
-
   char *sub_root; // subtree的根
 
 public:
@@ -189,9 +212,18 @@ public:
         return ((SubTree *)tree_)->printAll();
     }
 
+    void indextree_lock() {
+      tree_lock.lock();
+    }
+
+    void indextree_unlock() {
+      tree_lock.unlock();
+    }
+
 public:
     char *tree_;
     bool has_indextree;
+    std::mutex tree_lock;
 };
 
 enum PageType : uint8_t {
@@ -205,12 +237,13 @@ class header {
 private:
   Page *leftmost_ptr;     // 8 bytes // 非叶子节点最左侧子节点的指针
   Page *sibling_ptr;      // 8 bytes // 类似blink Tree，内部节点也存储兄弟节点指针
+  std::mutex mtx;        // 8 bytes // 写独占
   uint32_t level;         // 4 bytes // 叶节点level为0, 向上累加
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?实际没有节点合并, 用不到
   int8_t last_index;      // 1 bytes // 指示最后条目的位置
-  PageType page_type;      // 1 bytes // 指示page类型, 0: nvm_subtree_page, 1: dram_cachetree_page, 2: dram_indextree_page
-  std::mutex *mtx;        // 8 bytes // 写独占
+  uint8_t page_type;      // 1 bytes // 指示page类型, 0: nvm_subtree_page, 1: dram_cachetree_page, 2: dram_indextree_page
+  // Spinlock *mtx;
 
   friend class Page;
   friend class SubTree;
@@ -218,7 +251,9 @@ private:
 
 public:
   header() {
-    mtx = new std::mutex();
+    // mtx = new std::mutex;
+    // mtx = new Spinlock();
+    // std::cout << " cons " << mtx << std::endl << std::flush;
 
     leftmost_ptr = NULL;
     sibling_ptr = NULL;
@@ -228,7 +263,7 @@ public:
     is_deleted = false;
   }
 
-  ~header() { delete mtx; }
+  // ~header() { delete mtx; std::cout << " ~ " <<  mtx << std::endl << std::flush; mtx = NULL;}
 };
 
 class entry {
@@ -253,7 +288,7 @@ const int cardinality = (PAGESIZE - sizeof(header)) / sizeof(entry);
 const int count_in_line = CACHE_LINE_SIZE / sizeof(entry);
 
 // B+树节点
-class Page {
+class __attribute__((aligned(16))) Page {
 private:
   header hdr;                 // header in persistent memory, 32 bytes
   entry records[cardinality]; // slots in persistent memory, 16 bytes * n
@@ -304,12 +339,15 @@ public:
   }
 
   void *operator new(size_t size, bool inpmem) {
-    void *ret;
+    void *ret = NULL;
     if (inpmem)
       alloc_memalign(&ret, 64, size);
-    else
-      posix_memalign(&ret, 64, size);
-    
+    else {
+      int res = posix_memalign(&ret, 8, size);
+      // ret = malloc(size);
+      p_assert(res == 0, "alloc fail, res : %d, size : %ld", res, size);
+    }
+      
     return ret;
   }
 
@@ -397,11 +435,11 @@ public:
   // remove a entry with no rebalance, need to acquire the lock
   bool remove(SubTree *bt, entry_key_t key, bool only_rebalance = false,
               bool with_lock = true) {
-    hdr.mtx->lock();
+    hdr.mtx.lock();
 
     bool ret = remove_key(key);
 
-    hdr.mtx->unlock();
+    hdr.mtx.unlock();
 
     return ret;
   }
@@ -410,11 +448,11 @@ public:
   bool remove(IndexTree *bt, entry_key_t key, bool only_rebalance = false,
               bool with_lock = true) {
     p_assert(false, "not implement yet");
-    hdr.mtx->lock();
+    hdr.mtx.lock();
 
     bool ret = remove_key(key);
 
-    hdr.mtx->unlock();
+    hdr.mtx.unlock();
 
     return ret;
   }
@@ -429,17 +467,17 @@ public:
 //   bool remove_rebalancing(SubTree *bt, entry_key_t key,
 //                           bool only_rebalance = false, bool with_lock = true) {
 //     if (with_lock) {
-//       hdr.mtx->lock();
+//       hdr.mtx.lock();
 //     }
 //     if (hdr.is_deleted) {
 //       if (with_lock) {
-//         hdr.mtx->unlock();
+//         hdr.mtx.unlock();
 //       }
 //       return false;
 //     }
 
 //     if (!only_rebalance) {
-//       register int num_entries_before = count(); 
+//       int num_entries_before = count(); 
 
 //       // This node is root
 //       if (this == (Page *)bt->root) {
@@ -456,7 +494,7 @@ public:
 //         bool ret = remove_key(key);
 
 //         if (with_lock) {
-//           hdr.mtx->unlock();
+//           hdr.mtx.unlock();
 //         }
 //         return true;
 //       }
@@ -472,7 +510,7 @@ public:
 
 //       if (!should_rebalance) {
 //         if (with_lock) {
-//           hdr.mtx->unlock();
+//           hdr.mtx.unlock();
 //         }
 //         return (hdr.leftmost_ptr == NULL) ? ret : true;
 //       }
@@ -488,36 +526,36 @@ public:
 
 //     if (is_leftmost_node) {
 //       if (with_lock) {
-//         hdr.mtx->unlock();
+//         hdr.mtx.unlock();
 //       }
 
 //       if (!with_lock) {
-//         hdr.sibling_ptr->hdr.mtx->lock();
+//         hdr.sibling_ptr->hdr.mtx.lock();
 //       }
 //       hdr.sibling_ptr->remove(bt, hdr.sibling_ptr->records[0].key, true,
 //                               with_lock);
 //       if (!with_lock) {
-//         hdr.sibling_ptr->hdr.mtx->unlock();
+//         hdr.sibling_ptr->hdr.mtx.unlock();
 //       }
 //       return true;
 //     }
 
 //     if (with_lock) {
-//       left_sibling->hdr.mtx->lock();
+//       left_sibling->hdr.mtx.lock();
 //     }
 
 //     while (left_sibling->hdr.sibling_ptr != this) {
 //       if (with_lock) {
 //         Page *t = left_sibling->hdr.sibling_ptr;
-//         left_sibling->hdr.mtx->unlock();
+//         left_sibling->hdr.mtx.unlock();
 //         left_sibling = t;
-//         left_sibling->hdr.mtx->lock();
+//         left_sibling->hdr.mtx.lock();
 //       } else
 //         left_sibling = left_sibling->hdr.sibling_ptr;
 //     }
 
-//     register int num_entries = count();
-//     register int left_num_entries = left_sibling->count();
+//     int num_entries = count();
+//     int left_num_entries = left_sibling->count();
 
 //     // Merge or Redistribution
 //     int total_num_entries = num_entries + left_num_entries;
@@ -527,7 +565,7 @@ public:
 //     entry_key_t parent_key;
 
 //     if (total_num_entries > cardinality - 1) { // Redistribution
-//       register int m = (int)ceil(total_num_entries / 2);
+//       int m = (int)ceil(total_num_entries / 2);
 
 //       if (num_entries < left_num_entries) { // left -> right
 //         if (hdr.leftmost_ptr == nullptr) {
@@ -577,7 +615,7 @@ public:
 //         clflush((char *)&(hdr.is_deleted), sizeof(uint8_t));
 
 //         Page *new_sibling = new Page(hdr.level);
-//         new_sibling->hdr.mtx->lock();
+//         new_sibling->hdr.mtx.lock();
 //         new_sibling->hdr.sibling_ptr = hdr.sibling_ptr;
 
 //         int num_dist_entries = num_entries - m;
@@ -632,7 +670,7 @@ public:
 //                                     (char *)new_sibling, hdr.level + 1);
 //         }
 
-//         new_sibling->hdr.mtx->unlock();
+//         new_sibling->hdr.mtx.unlock();
 //       }
 //     } else {
 //       hdr.is_deleted = 1;
@@ -652,8 +690,8 @@ public:
 //     }
 
 //     if (with_lock) {
-//       left_sibling->hdr.mtx->unlock();
-//       hdr.mtx->unlock();
+//       left_sibling->hdr.mtx.unlock();
+//       hdr.mtx.unlock();
 //     }
 
 //     return true;
@@ -756,11 +794,11 @@ public:
   Page *store(SubTree *bt, char *left, entry_key_t key, char *right, bool flush,
               bool with_lock, Page *invalid_sibling = NULL) {
     if (with_lock) {
-      hdr.mtx->lock(); // Lock the write lock
+      hdr.mtx.lock(); // Lock the write lock
     }
     if (hdr.is_deleted) {
       if (with_lock) {
-        hdr.mtx->unlock();
+        hdr.mtx.unlock();
       }
 
       return NULL;
@@ -775,21 +813,22 @@ public:
         // zzy add
         // NVM::const_stat.AddCompare();
         if (with_lock) {
-          hdr.mtx->unlock(); // Unlock the write lock
+          hdr.mtx.unlock(); // Unlock the write lock
         }
-        return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
-                                      invalid_sibling);
+        // return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
+        //                               invalid_sibling);
+        return NULL;
       }
     }
 
-    register int num_entries = count();
+    int num_entries = count();
 
     // FAST
     if (num_entries < cardinality - 1) { // no need to split
       insert_key(key, right, &num_entries, flush);
 
       if (with_lock) {
-        hdr.mtx->unlock(); // Unlock the write lock
+        hdr.mtx.unlock(); // Unlock the write lock
       }
 
       return this;
@@ -800,10 +839,10 @@ public:
       if (page_is_inpmem()) {
         sibling = new(true) Page(PageType::NVM_SUBTREE_PAGE, hdr.level);
       } else {
-        sibling = new(false) Page(this->hdr.page_type, hdr.level);
+        sibling = new(false) Page((PageType)this->hdr.page_type, hdr.level);
       }
       
-      register int m = (int)ceil(num_entries / 2);
+      int m = (int)ceil(num_entries / 2);
       entry_key_t split_key = records[m].key;
 
       // migrate half of keys into the sibling
@@ -871,18 +910,26 @@ public:
             // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling);
+
+            if (unlikely(!index_tree_root->has_hasindextree())) {
+              index_tree_root->indextree_lock();
+              if (index_tree_root->has_hasindextree()) {
+                index_tree_root->indextree_unlock();
+              }
+            }
+
             if (!(index_tree_root->has_hasindextree())) {
-              // assert(bt);
               Page *index_root_page = new(false) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
               IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
               index_tree_root->set_indextree(indextree_);
+              index_tree_root->indextree_unlock();
               if (with_lock) {
-                hdr.mtx->unlock(); // Unlock the write lock
+                hdr.mtx.unlock(); // Unlock the write lock
               }
-              printf("generate index tree: %p\n", index_tree_root);
+              std::cout << "generate index tree: " << index_tree_root << std::endl << std::flush;
             } else {
               if (with_lock) {
-                hdr.mtx->unlock(); // Unlock the write lock
+                hdr.mtx.unlock(); // Unlock the write lock
               }
               // 调整父节点
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
@@ -893,7 +940,7 @@ public:
             bt->setNewRoot((char *)new_root);
 
             if (with_lock) {
-              hdr.mtx->unlock(); // Unlock the write lock
+              hdr.mtx.unlock(); // Unlock the write lock
             }
           }
           // Page *new_root =
@@ -901,11 +948,11 @@ public:
           // bt->setNewRoot((char *)new_root);
 
           // if (with_lock) {
-          //   hdr.mtx->unlock(); // Unlock the write lock
+          //   hdr.mtx.unlock(); // Unlock the write lock
           // }
         } else {
           if (with_lock) {
-            hdr.mtx->unlock(); // Unlock the write lock
+            hdr.mtx.unlock(); // Unlock the write lock
           }
           // 调整父节点
           bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
@@ -923,11 +970,11 @@ public:
   Page *store(IndexTree *bt, char *left, entry_key_t key, char *right, bool flush,
               bool with_lock, Page *invalid_sibling = NULL) {
     if (with_lock) {
-      hdr.mtx->lock(); // Lock the write lock
+      hdr.mtx.lock(); // Lock the write lock
     }
     if (hdr.is_deleted) {
       if (with_lock) {
-        hdr.mtx->unlock();
+        hdr.mtx.unlock();
       }
 
       return NULL;
@@ -942,21 +989,21 @@ public:
         // zzy add
         // NVM::const_stat.AddCompare();
         if (with_lock) {
-          hdr.mtx->unlock(); // Unlock the write lock
+          hdr.mtx.unlock(); // Unlock the write lock
         }
         return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
                                       invalid_sibling);
       }
     }
 
-    register int num_entries = count();
+    int num_entries = count();
 
     // FAST
     if (num_entries < cardinality - 1) { // no need to split
       insert_key(key, right, &num_entries, flush);
 
       if (with_lock) {
-        hdr.mtx->unlock(); // Unlock the write lock
+        hdr.mtx.unlock(); // Unlock the write lock
       }
 
       return this;
@@ -965,14 +1012,15 @@ public:
       // create a new node
       Page *sibling = nullptr;
       p_assert(!page_is_inpmem(), "index tree must be in dram");
-      sibling = new(false) Page(this->hdr.page_type, hdr.level);
+      sibling = new(false) Page((PageType)this->hdr.page_type, hdr.level);
       
-      register int m = (int)ceil(num_entries / 2);
+      int m = (int)ceil(num_entries / 2);
       entry_key_t split_key = records[m].key;
 
       // migrate half of keys into the sibling
       int sibling_cnt = 0;
       if (hdr.leftmost_ptr == NULL) { // leaf node
+        p_assert(false, "should not be here!");
         for (int i = m; i < num_entries; ++i) {
           sibling->insert_key(records[i].key, records[i].ptr, &sibling_cnt,
                               false);
@@ -1023,11 +1071,11 @@ public:
         indextree_->setNewRoot((char *)index_root_page);
         // index_tree_root.
         if (with_lock) {
-          hdr.mtx->unlock(); // Unlock the write lock
+          hdr.mtx.unlock(); // Unlock the write lock
         }
       } else {
         if (with_lock) {
-          hdr.mtx->unlock(); // Unlock the write lock
+          hdr.mtx.unlock(); // Unlock the write lock
         }
         // 调整父节点
         p_assert(bt == indextree_, "should be equal");
@@ -1272,9 +1320,9 @@ public:
   // print a node
   void print() {
     if (hdr.leftmost_ptr == NULL)
-      printf("[%d] leaf %x \n", this->hdr.level, this);
+      printf("[%d] leaf %p \n", this->hdr.level, this);
     else
-      printf("[%d] internal %x \n", this->hdr.level, this);
+      printf("[%d] internal %p \n", this->hdr.level, this);
     printf("last_index: %d\n", hdr.last_index);
     printf("switch_counter: %d\n", hdr.switch_counter);
     printf("search direction: ");
@@ -1284,12 +1332,12 @@ public:
       printf("<-\n");
 
     if (hdr.leftmost_ptr != NULL)
-      printf("%x ", hdr.leftmost_ptr);
+      printf("%p ", hdr.leftmost_ptr);
 
     for (int i = 0; records[i].ptr != NULL; ++i)
-      printf("%ld,%x ", records[i].key, records[i].ptr);
+      printf("%ld,%p ", records[i].key, records[i].ptr);
 
-    printf("%x ", hdr.sibling_ptr);
+    printf("%p ", hdr.sibling_ptr);
 
     printf("\n");
   }

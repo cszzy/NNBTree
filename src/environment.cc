@@ -16,8 +16,8 @@ Stat const_stat;
 uint64_t  pmem_size = 0;
 
 
-const size_t common_alloc_size = 50 * 1024 * 1024 * 1024UL;
-const size_t data_alloc_size = 50 * 1024 * 1024 * 1024UL;
+const size_t common_alloc_size = 100 * 1024 * 1024 * 1024UL;
+const size_t data_alloc_size = 100 * 1024 * 1024 * 1024UL;
 
 int env_init()
 {

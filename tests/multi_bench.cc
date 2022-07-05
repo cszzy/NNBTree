@@ -95,8 +95,7 @@ std::vector<T>read_data_from_osm(const std::string load_file,
         std::cerr << "unable to open " << load_file << std::endl;
         exit(EXIT_FAILURE);
       }
-      uint64_t id, size = 0;
-      double lat, lon;
+      uint64_t size = 0;
       while (!in.eof())
       {
         /* code */
@@ -219,7 +218,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Workload:              " << load_file << std::endl;
 
   std::vector<uint64_t> data_base;
-  Loads_type = 3;
+  Loads_type = 4;
   switch (Loads_type)
   {
   case -2:
@@ -268,8 +267,7 @@ int main(int argc, char *argv[]) {
 
   db->Init();
   nnbtree::Timer timer;
-  uint64_t us_times;
-  uint64_t load_pos = 0; 
+  uint64_t us_times; 
   std::cout << "Start run ...." << std::endl;
   // {
   //   int init_size = LOAD_SIZE;
@@ -313,7 +311,6 @@ int main(int argc, char *argv[]) {
 
     timer.Record("stop");
     us_times = timer.Microsecond("stop", "start");
-    load_pos = LOAD_SIZE;
     std::cout << "[Metic-Load]: Load " << LOAD_SIZE << ": " 
               << "cost " << us_times/1000000.0 << "s, " 
               << "iops " << (double)(LOAD_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;

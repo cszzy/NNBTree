@@ -24,7 +24,7 @@ SubTree::SubTree() {
   sub_root = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0); // 第一个subtree在pmem中
   clflush((char *)sub_root, sizeof(Page));
   height = 1;
-  clflush((char *)this, sizeof(SubTree));
+  // clflush((char *)this, sizeof(SubTree));
   // printf("[nnbtree]: root is %p, SubTree is %p.\n", sub_root, this);
 }
 
@@ -33,11 +33,11 @@ SubTree::SubTree(Page *root_) {
       sub_root = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0);
       clflush((char *)sub_root, sizeof(Page));
       height = 1;
-      clflush((char *)this, sizeof(SubTree));
+      // clflush((char *)this, sizeof(SubTree));
     } else {
       sub_root = (char *)root_;
       height = root_->GetLevel() + 1;
-      clflush((char *)this, sizeof(SubTree));
+      // clflush((char *)this, sizeof(SubTree));
     }
     // printf("[nnbtree]: root is %p, SubTree is %p, height is %d.\n", sub_root, this, height);
 }
@@ -46,7 +46,7 @@ void SubTree::setNewRoot(char *new_root) {
   this->sub_root = (char *)new_root;
   clflush((char *)&(this->sub_root), sizeof(char *));
   ++height;
-  printf("[subtree] setnewroot, height is %d\n", height);
+  std::cout << "[subtree] setnewroot, height is " << height << std::endl << std::flush;
 }
 
 char *SubTree::btree_search(entry_key_t key) {
@@ -65,7 +65,7 @@ char *SubTree::btree_search(entry_key_t key) {
   }
 
   if (!t) {
-    printf("NOT FOUND %lu, t = %x\n", key, t);
+    printf("NOT FOUND %lu, t = %p\n", key, t);
     return NULL;
   }
 
@@ -81,6 +81,9 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   }
 
   if (!p->store(this, NULL, key, right, true, true)) { // store
+    if (index_tree_root->has_hasindextree()) {
+      return index_tree_root->btree_insert(key, right);
+    }
     btree_insert(key, right);
   }
 }
@@ -138,11 +141,11 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
     p = (Page *)p->linear_search(key);
   }
 
-  p->hdr.mtx->lock();
+  p->hdr.mtx.lock();
 
   if ((char *)p->hdr.leftmost_ptr == ptr) {
     *is_leftmost_node = true;
-    p->hdr.mtx->unlock();
+    p->hdr.mtx.unlock();
     return;
   }
 
@@ -168,7 +171,8 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
     }
   }
 
-  p->hdr.mtx->unlock();
+  p->hdr.mtx.unlock();
+  return;
 }
 
 // Function to search keys from "min" to "max"
@@ -226,7 +230,7 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max, void **values
 void SubTree::PrintInfo() {
     // printf("This is fast_fair b+ tree.\n");
     // printf("Node size is %lu, M path is %d.\n", sizeof(Page), cardinality);
-    printf("Tree height is %d.\n", height);
+    std::cout << "Tree height is " << height << std::endl << std::flush;
 }
 
 void SubTree::printAll() {

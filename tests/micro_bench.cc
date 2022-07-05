@@ -82,8 +82,7 @@ std::vector<T> read_data_from_osm(
                                        std::cerr << "unable to open " << load_file << std::endl;
                                        exit(EXIT_FAILURE);
                                      }
-                                     uint64_t id, size = 0;
-                                     double lat, lon;
+                                     uint64_t size = 0;
                                      while (!in.eof())
                                      {
                                        /* code */
@@ -129,14 +128,14 @@ std::vector<uint64_t> generate_random_ycsb(size_t op_num)
   std::vector<uint64_t> data;
   data.resize(op_num);
   std::cout << "Use: " << __FUNCTION__ << std::endl;
-  const uint64_t ns = util::timing([&]
-                                   {
-                                     Random rnd(0, op_num - 1);
-                                     for (size_t i = 0; i < op_num; ++i)
-                                       data[i] = utils::Hash(i);
-                                     // for (size_t i = 0; i < op_num; ++i)
-                                     //   std::swap(data[i], data[rnd.Next()]);
-                                   });
+  // const uint64_t ns = util::timing([&]
+  //                                  {
+  //                                    Random rnd(0, op_num - 1);
+  //                                    for (size_t i = 0; i < op_num; ++i)
+  //                                      data[i] = utils::Hash(i);
+  //                                    // for (size_t i = 0; i < op_num; ++i)
+  //                                    //   std::swap(data[i], data[rnd.Next()]);
+  //                                  });
   // const uint64_t ms = ns / 1e6;
   // uint64_t size = data.size();
   // std::ofstream out("/home/zzy/dataset/generate_random_ycsb_1000M.dat", std::ios::binary);
@@ -429,7 +428,7 @@ int main(int argc, char *argv[])
   float insert_ratio = 0;
   util::FastRandom ranny(18);
   std::cout << "Start testing ...." << std::endl;
-  for (int i = 0; i < insert_ratios.size(); i++)
+  for (uint64_t i = 0; i < insert_ratios.size(); i++)
   {
     int wrong_get = 0;
     uint64_t value = 0;
@@ -476,7 +475,7 @@ int main(int argc, char *argv[])
     timer.Clear();
     timer.Record("start");
     uint64_t scan_times = std::min(total_scan_size / scan, load_pos);
-    for (int i = 0; i < scan_times; ++i)
+    for (uint64_t i = 0; i < scan_times; ++i)
     {
       if(i%1000000 == 0){
         std::cout << "scan times:" << scan_times << std::endl;
@@ -496,7 +495,7 @@ int main(int argc, char *argv[])
   uint64_t DELETE_SIZE = 10000000;
   timer.Clear();
   timer.Record("start");
-  for (int i = 0; i < DELETE_SIZE; ++i)
+  for (uint64_t i = 0; i < DELETE_SIZE; ++i)
   {
     if(i%1000000 == 0){
         std::cout << "delete times:" << i << std::endl;
