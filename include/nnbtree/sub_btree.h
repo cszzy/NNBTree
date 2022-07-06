@@ -77,14 +77,17 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
-    p = (Page *)p->linear_search(key);
+    Page *t = (Page *)p->linear_search(key);
+    if (t == p->hdr.sibling_ptr) { // XXX : very important, 不能进入另一颗子树
+      // p_assert(false, "should not happen");
+      return index_tree_root->btree_insert(key, right);
+    }
+    p = t;
   }
 
   if (!p->store(this, NULL, key, right, true, true)) { // store
-    if (index_tree_root->has_hasindextree()) {
       return index_tree_root->btree_insert(key, right);
-    }
-    btree_insert(key, right);
+    // btree_insert(key, right);
   }
 }
 
@@ -92,16 +95,23 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
 // store the key into the node at the given level
 void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
                                   uint32_t level) {
+retry:
   Page *p = (Page *)sub_root;
 
   if (level > (p->hdr.level))
     return;
 
-  while (p->hdr.level > level)
-    p = (Page *)p->linear_search(key);
+  while (p->hdr.level > level) {
+    Page *t = (Page *)p->linear_search(key);
+    if (t == p->hdr.sibling_ptr)
+      goto retry;
+    p = t;
+  }
+    // p = (Page *)p->linear_search(key);
 
   if (!p->store(this, NULL, key, right, true, true)) {
-    btree_insert_internal(left, key, right, level);
+    goto retry;
+    // btree_insert_internal(left, key, right, level);
   }
 }
 
@@ -141,11 +151,11 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
     p = (Page *)p->linear_search(key);
   }
 
-  p->hdr.mtx.lock();
+  p->hdr.mtx->lock();
 
   if ((char *)p->hdr.leftmost_ptr == ptr) {
     *is_leftmost_node = true;
-    p->hdr.mtx.unlock();
+    p->hdr.mtx->unlock();
     return;
   }
 
@@ -171,7 +181,7 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
     }
   }
 
-  p->hdr.mtx.unlock();
+  p->hdr.mtx->unlock();
   return;
 }
 

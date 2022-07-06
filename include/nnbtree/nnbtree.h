@@ -26,7 +26,7 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
+#define MAX_SUBTREE_HEIGHT 4 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
 
@@ -135,7 +135,7 @@ public:
 };
 
 class NNBTree;
-NNBTree *index_tree_root;
+NNBTree *index_tree_root = NULL;
 
 class NNBTree {
 public:
@@ -237,7 +237,7 @@ class header {
 private:
   Page *leftmost_ptr;     // 8 bytes // 非叶子节点最左侧子节点的指针
   Page *sibling_ptr;      // 8 bytes // 类似blink Tree，内部节点也存储兄弟节点指针
-  std::mutex mtx;        // 8 bytes // 写独占
+  std::mutex *mtx;        // 8 bytes // 写独占
   uint32_t level;         // 4 bytes // 叶节点level为0, 向上累加
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?实际没有节点合并, 用不到
@@ -251,7 +251,7 @@ private:
 
 public:
   header() {
-    // mtx = new std::mutex;
+    mtx = new std::mutex;
     // mtx = new Spinlock();
     // std::cout << " cons " << mtx << std::endl << std::flush;
 
@@ -263,7 +263,7 @@ public:
     is_deleted = false;
   }
 
-  // ~header() { delete mtx; std::cout << " ~ " <<  mtx << std::endl << std::flush; mtx = NULL;}
+  ~header() { delete mtx; std::cout << " ~ " <<  mtx << std::endl << std::flush; mtx = NULL;}
 };
 
 class entry {
@@ -435,11 +435,11 @@ public:
   // remove a entry with no rebalance, need to acquire the lock
   bool remove(SubTree *bt, entry_key_t key, bool only_rebalance = false,
               bool with_lock = true) {
-    hdr.mtx.lock();
+    hdr.mtx->lock();
 
     bool ret = remove_key(key);
 
-    hdr.mtx.unlock();
+    hdr.mtx->unlock();
 
     return ret;
   }
@@ -448,11 +448,11 @@ public:
   bool remove(IndexTree *bt, entry_key_t key, bool only_rebalance = false,
               bool with_lock = true) {
     p_assert(false, "not implement yet");
-    hdr.mtx.lock();
+    hdr.mtx->lock();
 
     bool ret = remove_key(key);
 
-    hdr.mtx.unlock();
+    hdr.mtx->unlock();
 
     return ret;
   }
@@ -467,11 +467,11 @@ public:
 //   bool remove_rebalancing(SubTree *bt, entry_key_t key,
 //                           bool only_rebalance = false, bool with_lock = true) {
 //     if (with_lock) {
-//       hdr.mtx.lock();
+//       hdr.mtx->lock();
 //     }
 //     if (hdr.is_deleted) {
 //       if (with_lock) {
-//         hdr.mtx.unlock();
+//         hdr.mtx->unlock();
 //       }
 //       return false;
 //     }
@@ -494,7 +494,7 @@ public:
 //         bool ret = remove_key(key);
 
 //         if (with_lock) {
-//           hdr.mtx.unlock();
+//           hdr.mtx->unlock();
 //         }
 //         return true;
 //       }
@@ -510,7 +510,7 @@ public:
 
 //       if (!should_rebalance) {
 //         if (with_lock) {
-//           hdr.mtx.unlock();
+//           hdr.mtx->unlock();
 //         }
 //         return (hdr.leftmost_ptr == NULL) ? ret : true;
 //       }
@@ -526,30 +526,30 @@ public:
 
 //     if (is_leftmost_node) {
 //       if (with_lock) {
-//         hdr.mtx.unlock();
+//         hdr.mtx->unlock();
 //       }
 
 //       if (!with_lock) {
-//         hdr.sibling_ptr->hdr.mtx.lock();
+//         hdr.sibling_ptr->hdr.mtx->lock();
 //       }
 //       hdr.sibling_ptr->remove(bt, hdr.sibling_ptr->records[0].key, true,
 //                               with_lock);
 //       if (!with_lock) {
-//         hdr.sibling_ptr->hdr.mtx.unlock();
+//         hdr.sibling_ptr->hdr.mtx->unlock();
 //       }
 //       return true;
 //     }
 
 //     if (with_lock) {
-//       left_sibling->hdr.mtx.lock();
+//       left_sibling->hdr.mtx->lock();
 //     }
 
 //     while (left_sibling->hdr.sibling_ptr != this) {
 //       if (with_lock) {
 //         Page *t = left_sibling->hdr.sibling_ptr;
-//         left_sibling->hdr.mtx.unlock();
+//         left_sibling->hdr.mtx->unlock();
 //         left_sibling = t;
-//         left_sibling->hdr.mtx.lock();
+//         left_sibling->hdr.mtx->lock();
 //       } else
 //         left_sibling = left_sibling->hdr.sibling_ptr;
 //     }
@@ -615,7 +615,7 @@ public:
 //         clflush((char *)&(hdr.is_deleted), sizeof(uint8_t));
 
 //         Page *new_sibling = new Page(hdr.level);
-//         new_sibling->hdr.mtx.lock();
+//         new_sibling->hdr.mtx->lock();
 //         new_sibling->hdr.sibling_ptr = hdr.sibling_ptr;
 
 //         int num_dist_entries = num_entries - m;
@@ -670,7 +670,7 @@ public:
 //                                     (char *)new_sibling, hdr.level + 1);
 //         }
 
-//         new_sibling->hdr.mtx.unlock();
+//         new_sibling->hdr.mtx->unlock();
 //       }
 //     } else {
 //       hdr.is_deleted = 1;
@@ -690,8 +690,8 @@ public:
 //     }
 
 //     if (with_lock) {
-//       left_sibling->hdr.mtx.unlock();
-//       hdr.mtx.unlock();
+//       left_sibling->hdr.mtx->unlock();
+//       hdr.mtx->unlock();
 //     }
 
 //     return true;
@@ -794,11 +794,11 @@ public:
   Page *store(SubTree *bt, char *left, entry_key_t key, char *right, bool flush,
               bool with_lock, Page *invalid_sibling = NULL) {
     if (with_lock) {
-      hdr.mtx.lock(); // Lock the write lock
+      hdr.mtx->lock(); // Lock the write lock
     }
     if (hdr.is_deleted) {
       if (with_lock) {
-        hdr.mtx.unlock();
+        hdr.mtx->unlock();
       }
 
       return NULL;
@@ -813,11 +813,13 @@ public:
         // zzy add
         // NVM::const_stat.AddCompare();
         if (with_lock) {
-          hdr.mtx.unlock(); // Unlock the write lock
+          hdr.mtx->unlock(); // Unlock the write lock
         }
-        // return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
+        // if (hdr.leftmost_ptr)
+        //   return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
         //                               invalid_sibling);
-        return NULL;
+        // else
+          return NULL;
       }
     }
 
@@ -828,7 +830,7 @@ public:
       insert_key(key, right, &num_entries, flush);
 
       if (with_lock) {
-        hdr.mtx.unlock(); // Unlock the write lock
+        hdr.mtx->unlock(); // Unlock the write lock
       }
 
       return this;
@@ -924,12 +926,12 @@ public:
               index_tree_root->set_indextree(indextree_);
               index_tree_root->indextree_unlock();
               if (with_lock) {
-                hdr.mtx.unlock(); // Unlock the write lock
+                hdr.mtx->unlock(); // Unlock the write lock
               }
               std::cout << "generate index tree: " << index_tree_root << std::endl << std::flush;
             } else {
               if (with_lock) {
-                hdr.mtx.unlock(); // Unlock the write lock
+                hdr.mtx->unlock(); // Unlock the write lock
               }
               // 调整父节点
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
@@ -940,7 +942,7 @@ public:
             bt->setNewRoot((char *)new_root);
 
             if (with_lock) {
-              hdr.mtx.unlock(); // Unlock the write lock
+              hdr.mtx->unlock(); // Unlock the write lock
             }
           }
           // Page *new_root =
@@ -948,11 +950,11 @@ public:
           // bt->setNewRoot((char *)new_root);
 
           // if (with_lock) {
-          //   hdr.mtx.unlock(); // Unlock the write lock
+          //   hdr.mtx->unlock(); // Unlock the write lock
           // }
         } else {
           if (with_lock) {
-            hdr.mtx.unlock(); // Unlock the write lock
+            hdr.mtx->unlock(); // Unlock the write lock
           }
           // 调整父节点
           bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
@@ -970,11 +972,11 @@ public:
   Page *store(IndexTree *bt, char *left, entry_key_t key, char *right, bool flush,
               bool with_lock, Page *invalid_sibling = NULL) {
     if (with_lock) {
-      hdr.mtx.lock(); // Lock the write lock
+      hdr.mtx->lock(); // Lock the write lock
     }
     if (hdr.is_deleted) {
       if (with_lock) {
-        hdr.mtx.unlock();
+        hdr.mtx->unlock();
       }
 
       return NULL;
@@ -989,7 +991,7 @@ public:
         // zzy add
         // NVM::const_stat.AddCompare();
         if (with_lock) {
-          hdr.mtx.unlock(); // Unlock the write lock
+          hdr.mtx->unlock(); // Unlock the write lock
         }
         return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
                                       invalid_sibling);
@@ -1003,7 +1005,7 @@ public:
       insert_key(key, right, &num_entries, flush);
 
       if (with_lock) {
-        hdr.mtx.unlock(); // Unlock the write lock
+        hdr.mtx->unlock(); // Unlock the write lock
       }
 
       return this;
@@ -1071,11 +1073,11 @@ public:
         indextree_->setNewRoot((char *)index_root_page);
         // index_tree_root.
         if (with_lock) {
-          hdr.mtx.unlock(); // Unlock the write lock
+          hdr.mtx->unlock(); // Unlock the write lock
         }
       } else {
         if (with_lock) {
-          hdr.mtx.unlock(); // Unlock the write lock
+          hdr.mtx->unlock(); // Unlock the write lock
         }
         // 调整父节点
         p_assert(bt == indextree_, "should be equal");
