@@ -50,14 +50,19 @@ void SubTree::setNewRoot(char *new_root) {
 }
 
 char *SubTree::btree_search(entry_key_t key) {
+  std::lock_guard<std::mutex> l(subtree_lock);
+
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
-    p = (Page *)p->linear_search(key);
+    Page *t = (Page *)p->linear_search(key);
+    p_assert(t != p->hdr.sibling_ptr, "should not happen");
+    p = t;
   }
 
-  Page *t;
+  Page *t = NULL;
   while ((t = (Page *)p->linear_search(key)) == p->hdr.sibling_ptr) {
+    p_assert(false, "should not happen");
     p = t;
     if (!p) {
       break;
@@ -74,18 +79,33 @@ char *SubTree::btree_search(entry_key_t key) {
 
 // insert the key in the leaf node
 void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
+  // std::lock_guard<std::mutex> l(subtree_lock);
+  subtree_lock.lock();
+retry:
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
-    p = (Page *)p->linear_search(key);
-  }
-
-  if (!p->store(this, NULL, key, right, true, true)) { // store
-    if (index_tree_root->has_hasindextree()) {
+    Page *t = (Page *)p->linear_search(key);
+    if (t == p->hdr.sibling_ptr) { // XXX : very important, 不能进入另一颗子树
+      // p_assert(false, "should not happen");
+      subtree_lock.unlock();
       return index_tree_root->btree_insert(key, right);
     }
-    btree_insert(key, right);
+    p = t;
   }
+
+  if (!p->store(this, NULL, key, right, true, false)) { // store
+    if (index_tree_root->has_hasindextree()) {
+      subtree_lock.unlock();
+      return index_tree_root->btree_insert(key, right);
+    }
+    // subtree_lock.unlock();
+    // btree_insert(key, right);
+    p_assert(false, "should not happen");
+    goto retry;
+  }
+
+  subtree_lock.unlock();
 }
 
 // XXX: 需要判断store应该落在indextree还是subtree
@@ -100,27 +120,31 @@ void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
   while (p->hdr.level > level)
     p = (Page *)p->linear_search(key);
 
-  if (!p->store(this, NULL, key, right, true, true)) {
+  if (!p->store(this, NULL, key, right, true, false)) {
     btree_insert_internal(left, key, right, level);
   }
 }
 
 void SubTree::btree_delete(entry_key_t key) {
+  std::lock_guard<std::mutex> l(subtree_lock);
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) { // 遍历到叶
-    p = (Page *)p->linear_search(key);
+    Page *t = (Page *)p->linear_search(key);
+    p_assert(t != p->hdr.sibling_ptr, "should not happen");
+    p = t;
   }
 
-  Page *t;
+  Page *t = NULL;
   while ((t = (Page *)p->linear_search(key)) == p->hdr.sibling_ptr) {
+    p_assert(false, "should not happen");
     p = t;
     if (!p)
       break;
   }
 
   if (p && t) {
-    if (!p->remove(this, key)) {
+    if (!p->remove(this, key, false, false)) {
       btree_delete(key);
     }
   } else {
@@ -141,11 +165,11 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
     p = (Page *)p->linear_search(key);
   }
 
-  p->hdr.mtx.lock();
+  p->hdr.mtx->lock();
 
   if ((char *)p->hdr.leftmost_ptr == ptr) {
     *is_leftmost_node = true;
-    p->hdr.mtx.unlock();
+    p->hdr.mtx->unlock();
     return;
   }
 
@@ -171,7 +195,7 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
     }
   }
 
-  p->hdr.mtx.unlock();
+  p->hdr.mtx->unlock();
   return;
 }
 
@@ -257,6 +281,14 @@ void SubTree::printAll() {
 
 Page *SubTree::getRoot() {
   return (Page *)sub_root;
+}
+
+void SubTree::lock_subtree() {
+  subtree_lock.lock();
+}
+
+void SubTree::unlock_subtree() {
+  subtree_lock.unlock();
 }
 
 } // end namespace nnbtree

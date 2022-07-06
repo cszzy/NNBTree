@@ -48,8 +48,11 @@ begin:
   }
 
   SubTree *t = (SubTree*)(p->linear_search(key));
-  if ((Page*)t == p->hdr.sibling_ptr)
-    goto begin;
+  while ((Page*)t == p->hdr.sibling_ptr) {
+    // goto begin;
+    p = (Page *)t;
+    t = (SubTree*)(p->linear_search(key));;
+  }
 
   t->btree_insert(key, right);
 }
@@ -94,11 +97,11 @@ void IndexTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level
     p = (Page *)p->linear_search(key);
   }
 
-  p->hdr.mtx.lock();
+  p->hdr.mtx->lock();
 
   if ((char *)p->hdr.leftmost_ptr == ptr) {
     *is_leftmost_node = true;
-    p->hdr.mtx.unlock();
+    p->hdr.mtx->unlock();
     return;
   }
 
@@ -124,7 +127,7 @@ void IndexTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level
     }
   }
 
-  p->hdr.mtx.unlock();
+  p->hdr.mtx->unlock();
 }
 
 // Function to search keys from "min" to "max"

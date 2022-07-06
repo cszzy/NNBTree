@@ -68,7 +68,7 @@ opnum=10000000
 scansize=4000000
 # thread=4
 
-for thread in 2
+for thread in 32
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done
