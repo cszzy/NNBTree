@@ -47,19 +47,13 @@ namespace FastFair {
 static pthread_mutex_t print_mtx;
 
 static inline void clflush(char *data, int len) {
-#ifndef USE_MEM
     NVM::Mem_persist(data, len);
-#endif
 }
 
 // const size_t NVM_ValueSize = 256;
 void alloc_memalign(void **ret, size_t alignment, size_t size) {
-#ifdef USE_MEM
-  posix_memalign(ret, alignment, size);
-#else
   *ret =  NVM::data_alloc->alloc(size);
   assert(*ret);
-#endif
 }
 
 class __attribute__((aligned(64))) Spinlock {

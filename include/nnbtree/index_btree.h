@@ -15,14 +15,14 @@ namespace nnbtree {
 IndexTree::IndexTree(Page *page_, uint32_t level_) {
   root = (char *)page_;
   height = level_ + 1;
-  std::cout << "[nnbtree]: indextree root is " << (void*)root << " , indextree is " << this << " , height is " << height << std::endl << std::flush;
+  std::cout << "[nnbtree]: indextree root is " << (void*)root << " , indextree is " << this << " , height is " << height << std::endl;
 }
 
 
 void IndexTree::setNewRoot(char *new_root) {
   this->root = new_root;
   ++height;
-  std::cout << "[indextree] setnewroot, height is " << height << std::endl << std::flush;
+  std::cout << "[indextree] setnewroot, height is " << height << std::endl;
 }
 
 char *IndexTree::btree_search(entry_key_t key) {
@@ -33,6 +33,12 @@ char *IndexTree::btree_search(entry_key_t key) {
   }
 
   SubTree *t = (SubTree*)(p->linear_search(key));
+  while ((Page*)t == p->hdr.sibling_ptr) {
+    // goto begin;
+    p = (Page *)t;
+    t = (SubTree*)(p->linear_search(key));
+    std::cout << "111111111" << std::endl;
+  }
 
   return t->btree_search(key);
 }
@@ -40,7 +46,7 @@ char *IndexTree::btree_search(entry_key_t key) {
 // XXX: 搜索时indextree最后一层应该指向subtree，需要修改结构
 // insert the key in the leaf node
 void IndexTree::btree_insert(entry_key_t key, char *right) { // need to be string
-begin:
+// begin:
   Page *p = (Page *)root;
 
   while (p->hdr.page_type != PageType::INDEXTREE_LAST_LEVEL_PAGE) {

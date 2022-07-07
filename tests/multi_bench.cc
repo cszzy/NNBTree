@@ -16,9 +16,22 @@
 #include "util.h"
 #include "random.h"
 
+#include "apex_util.h"
+
 using ycsbc::KvDB;
 
 using namespace util;
+
+void clear_cache() {
+  // Remove cache
+  int size = 256 * 1024 * 1024;
+  char *garbage = new char[size];
+  for (int i = 0; i < size; ++i)
+    garbage[i] = i;
+  for (int i = 100; i < size; ++i)
+    garbage[i] += garbage[i - 100];
+  delete[] garbage;
+}
 
 struct operation
 {
@@ -315,6 +328,8 @@ int main(int argc, char *argv[]) {
               << "iops " << (double)(LOAD_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
 
+  clear_cache();
+
   {
      // Put
     std::vector<std::thread> threads;
@@ -349,6 +364,13 @@ int main(int argc, char *argv[]) {
   }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
+
+  uint64_t *new_test = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.9);
+  
+  clear_cache();
+  std::cout << "getchar" << std::endl;
+  getchar();
+
   {
      // Get
     std::vector<std::thread> threads;
@@ -366,8 +388,8 @@ int main(int argc, char *argv[]) {
             size_t size = (thread_id == thread_num-1) ? GET_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
             size_t value;
             for (size_t j = 0; j < size; ++j) {
-                bool ret = db->Get(data_base[start_pos+j], value);
-                if (ret != true || value != data_base[start_pos+j]) {
+                bool ret = db->Get(new_test[start_pos+j], value);
+                if (ret != true || value != new_test[start_pos+j]) {
                     std::cout << "Get error!" << std::endl;
                 }
                 if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 

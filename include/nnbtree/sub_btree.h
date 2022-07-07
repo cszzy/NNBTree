@@ -46,23 +46,29 @@ void SubTree::setNewRoot(char *new_root) {
   this->sub_root = (char *)new_root;
   clflush((char *)&(this->sub_root), sizeof(char *));
   ++height;
-  std::cout << "[subtree] setnewroot, height is " << height << std::endl << std::flush;
+  std::cout << "[subtree] setnewroot, height is " << height << std::endl;
 }
 
 char *SubTree::btree_search(entry_key_t key) {
-  std::lock_guard<std::mutex> l(subtree_lock);
+  // std::lock_guard<std::mutex> l(subtree_lock);
 
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
     Page *t = (Page *)p->linear_search(key);
-    p_assert(t != p->hdr.sibling_ptr, "should not happen");
+    // p_assert(t != p->hdr.sibling_ptr, "should not happen");
+    assert(t != p->hdr.sibling_ptr);
+    if (t == p->hdr.sibling_ptr) {
+      std::cout << "azheazhe" << std::endl;
+    }
     p = t;
   }
 
   Page *t = NULL;
   while ((t = (Page *)p->linear_search(key)) == p->hdr.sibling_ptr) {
-    p_assert(false, "should not happen");
+    // p_assert(false, "should not happen");
+    // assert(false);
+    std::cout << "azheazheazhe" << std::endl;
     p = t;
     if (!p) {
       break;
@@ -73,6 +79,7 @@ char *SubTree::btree_search(entry_key_t key) {
     printf("NOT FOUND %lu, t = %p\n", key, t);
     return NULL;
   }
+
 
   return (char *)t;
 }
@@ -126,7 +133,9 @@ void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
 }
 
 void SubTree::btree_delete(entry_key_t key) {
-  std::lock_guard<std::mutex> l(subtree_lock);
+  // std::lock_guard<std::mutex> l(subtree_lock);
+  subtree_lock.lock();
+  
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) { // 遍历到叶
@@ -150,6 +159,8 @@ void SubTree::btree_delete(entry_key_t key) {
   } else {
     // printf("not found the key to delete %lu\n", key);
   }
+
+  subtree_lock.unlock();
 }
 
 // 内部节点如果有目标key,则需要删除

@@ -34,12 +34,16 @@ void Init()
 {
     NVM::data_init();
     tree_ = new btree_t();
+#ifdef TEST_PMEM_SIZE
     NVM::pmem_size = 0;
+#endif
 }
 
 void Info()
 {
+#ifdef TEST_PMEM_SIZE
     std::cout << "NVM WRITE : " << NVM::pmem_size << std::endl;
+#endif
     tree_->PrintInfo();
     NVM::show_stat();
 }
@@ -114,12 +118,16 @@ void Init()
 {
     NVM::data_init();
     tree_ = new btree_t();
+#ifdef TEST_PMEM_SIZE
     NVM::pmem_size = 0;
+#endif
 }
 
 void Info()
 {
+#ifdef TEST_PMEM_SIZE
     std::cout << "NVM WRITE : " << NVM::pmem_size << std::endl;
+#endif
     tree_->PrintInfo();
     NVM::show_stat();
 }

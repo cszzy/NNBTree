@@ -20,13 +20,15 @@
 // #define p_info(fmt, ...) {printf("MetaFS info: " fmt "\n", ##__VA_ARGS__); fflush(stdout);}
 #define p_info(fmt, ...) {;}
 #define p_err(fmt, ...) fprintf(stderr, "%s:%d  " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-#define p_assert(b, fmt, ...)                                              \
-	if (unlikely(!(b)))                                                      \
-	{                                                                        \
-		fprintf(stderr, "%s:%d " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
-		*(long *)0 = 0;                                                        \
-		exit(100);                                                             \
-	}
+// #define p_assert(b, fmt, ...)                                              \
+// 	if (unlikely(!(b)))                                                      \
+// 	{                                                                        \
+// 		fprintf(stderr, "%s:%d " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
+// 		*(long *)0 = 0;                                                        \
+// 		exit(100);                                                             \
+// 	}
+
+#define p_assert(b, fmt, ...) 
 #define barrier() asm volatile("" \
 															 :  \
 															 :  \

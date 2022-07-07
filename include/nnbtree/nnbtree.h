@@ -26,7 +26,7 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 4 // 子树最大高度, 应尽量地设置小一些提高性能
+#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
 
@@ -79,8 +79,8 @@ private:
   int height;
   // char *root; // 整个B+树的根
   char *sub_root; // subtree的根
-  std::mutex subtree_lock; // 每个子树一个锁
-
+  // std::mutex subtree_lock; // 每个子树一个锁
+  Spinlock subtree_lock;
 public:
   SubTree();
   void setNewRoot(char *); // 设置sub_root
@@ -292,7 +292,7 @@ const int cardinality = (PAGESIZE - sizeof(header)) / sizeof(entry);
 const int count_in_line = CACHE_LINE_SIZE / sizeof(entry);
 
 // B+树节点
-class __attribute__((aligned(64))) Page {
+class Page {
 private:
   header hdr;                 // header in persistent memory, 32 bytes
   entry records[cardinality]; // slots in persistent memory, 16 bytes * n
@@ -342,20 +342,9 @@ public:
     }
   }
 
-  void *operator new(size_t size, bool inpmem) {
-    void *ret = NULL;
-    if (inpmem)
-      alloc_memalign(&ret, 64, size);
-    else {
-      int res = posix_memalign(&ret, 8, size);
-      // ret = malloc(size);
-      p_assert(res == 0, "alloc fail, res: %d, size: %ld", res, size);
-    }
-      
-    return ret;
-  }
+  void *operator new(size_t size, bool inpmem);
 
-  inline bool page_is_inpmem() {
+  bool page_is_inpmem() {
     return hdr.page_type == PageType::NVM_SUBTREE_PAGE;
   }
 
@@ -364,7 +353,60 @@ public:
   }
 
   // 返回条目数量
-  inline int count() {
+  int count();
+
+  bool remove_key(entry_key_t key);
+
+  // remove a entry with no rebalance, need to acquire the lock
+  bool remove(SubTree *bt, entry_key_t key, bool only_rebalance = false, bool with_lock = true);
+
+  bool remove(IndexTree *bt, entry_key_t key, bool only_rebalance = false, bool with_lock = true);
+
+  bool remove_rebalancing(SubTree *bt, entry_key_t key, bool only_rebalance = false, bool with_lock = true);
+
+  void insert_key(entry_key_t key, char *ptr, int *num_entries, bool flush = true, bool update_last_index = true);
+
+  // Insert a new key - FAST and FAIR
+  Page *store(SubTree *bt, char *left, entry_key_t key, char *right, bool flush,
+              bool with_lock, Page *invalid_sibling = NULL);
+
+  Page * store(IndexTree *bt, char *left, entry_key_t key, char *right, bool flush,
+              bool with_lock, Page *invalid_sibling = NULL);
+
+  // Search keys with linear search
+  void linear_search_range(entry_key_t min, entry_key_t max, unsigned long *buf);
+
+  char *linear_search(entry_key_t key);
+
+  // print a node
+  void print();
+
+  void printAll();
+  
+  void CalculateSapce(uint64_t &space);
+
+  // Search keys with linear search
+  void linear_search_range(entry_key_t min, entry_key_t max, 
+      std::vector<std::pair<uint64_t, uint64_t>> &result, int &size);
+
+  void linear_search_range(entry_key_t min, 
+        entry_key_t max, void **values, int &size);
+};
+
+  void * Page::operator new(size_t size, bool inpmem) {
+    void *ret = NULL;
+    // ret = malloc(size);
+    if (inpmem)
+      alloc_memalign(&ret, 64, size);
+    else {
+      // int res = posix_memalign(&ret, 8, size);
+      ret = malloc(size);
+      // p_assert(res == 0, "alloc fail, res: %d, size: %ld", res, size);
+    }
+    return ret;
+  }
+
+  int Page::count() {
     uint8_t previous_switch_counter;
     int count = 0;
     do {
@@ -390,7 +432,7 @@ public:
     return count;
   }
 
-  inline bool remove_key(entry_key_t key) {
+  bool Page::remove_key(entry_key_t key) {
     // Set the switch_counter
     if (IS_FORWARD(hdr.switch_counter))
       ++hdr.switch_counter;
@@ -436,9 +478,7 @@ public:
     return shift;
   }
 
-  // remove a entry with no rebalance, need to acquire the lock
-  bool remove(SubTree *bt, entry_key_t key, bool only_rebalance = false,
-              bool with_lock = true) {
+  bool Page::remove(SubTree *bt, entry_key_t key, bool only_rebalance, bool with_lock) {
     if (with_lock) {
       hdr.mtx->lock();
     }
@@ -453,8 +493,7 @@ public:
   }
 
   // remove a entry with no rebalance, need to acquire the lock
-  bool remove(IndexTree *bt, entry_key_t key, bool only_rebalance = false,
-              bool with_lock = true) {
+  bool Page::remove(IndexTree *bt, entry_key_t key, bool only_rebalance, bool with_lock) {
     p_assert(false, "not implement yet");
     hdr.mtx->lock();
 
@@ -465,6 +504,98 @@ public:
     return ret;
   }
 
+  void Page::insert_key(entry_key_t key, char *ptr, int *num_entries, bool flush, bool update_last_index) {
+    // update switch_counter
+    // 在shift前,如果上次的操作是删除操作，则先更新switch_counter
+    if (!IS_FORWARD(hdr.switch_counter))
+      ++hdr.switch_counter;
+
+    // FAST
+    if (*num_entries == 0) { // this Page is empty
+      entry *new_entry = (entry *)&records[0];
+      entry *array_end = (entry *)&records[1];
+      new_entry->key = (entry_key_t)key;
+      new_entry->ptr = (char *)ptr;
+
+      array_end->ptr = (char *)NULL;
+
+      if (flush) {
+        if (page_is_inpmem()) {
+          clflush((char *)this, CACHE_LINE_SIZE);
+        }
+      }
+    } else {
+      int i = *num_entries - 1, inserted = 0, to_flush_cnt = 0;
+      records[*num_entries + 1].ptr = records[*num_entries].ptr; 
+      if (flush) {
+        if ((uint64_t) & (records[*num_entries + 1].ptr) % CACHE_LINE_SIZE == 0) {
+          if (page_is_inpmem()) {
+            clflush((char *)&(records[*num_entries + 1].ptr), sizeof(char *));
+          }
+        }
+      }
+
+      // FAST
+      for (i = *num_entries - 1; i >= 0; i--) {
+        //   zzy add
+          // NVM::const_stat.AddCompare();
+        if (key < records[i].key) {
+          records[i + 1].ptr = records[i].ptr;
+          records[i + 1].key = records[i].key;
+
+          if (flush) {
+            uint64_t records_ptr = (uint64_t)(&records[i + 1]);
+
+            int remainder = records_ptr % CACHE_LINE_SIZE;
+            bool do_flush =
+                (remainder == 0) ||
+                ((((int)(remainder + sizeof(entry)) / CACHE_LINE_SIZE) == 1) &&
+                 ((remainder + sizeof(entry)) % CACHE_LINE_SIZE) != 0);
+            if (do_flush) {
+              if (page_is_inpmem()) {
+                clflush((char *)records_ptr, CACHE_LINE_SIZE);
+              }
+              to_flush_cnt = 0;
+            } else
+              ++to_flush_cnt;
+          }
+        } else {
+          records[i + 1].ptr = records[i].ptr;
+          records[i + 1].key = key;
+          records[i + 1].ptr = ptr;
+
+          if (flush) {
+            if (page_is_inpmem()) {
+              clflush((char *)&records[i + 1], sizeof(entry));
+            }
+          }
+          inserted = 1;
+          break;
+        }
+      }
+      if (inserted == 0) {
+        records[0].ptr = (char *)hdr.leftmost_ptr;
+        records[0].key = key;
+        records[0].ptr = ptr;
+        if (flush) {
+          if (page_is_inpmem()) {
+            clflush((char *)&records[0], sizeof(entry));
+          }
+        }
+      }
+    }
+
+    if (update_last_index) {
+      hdr.last_index = (int8_t)(*num_entries);
+      // zzy add
+      if (page_is_inpmem()) {
+        clflush((char *)&(hdr.last_index), sizeof(int8_t));
+      }
+    }
+    ++(*num_entries);
+  }
+
+  
 //   /*
 //    * Although we implemented the rebalancing of B+-Tree, it is currently blocked
 //    * for the performance. Please refer to the follow. Chi, P., Lee, W. C., &
@@ -472,8 +603,7 @@ public:
 //    * In Proceedings of the 2014 international symposium on Low power electronics
 //    * and design (pp. 69-74). ACM.
 //    */
-//   bool remove_rebalancing(SubTree *bt, entry_key_t key,
-//                           bool only_rebalance = false, bool with_lock = true) {
+//   bool Page::remove_rebalancing(SubTree *bt, entry_key_t key, bool only_rebalance, bool with_lock) {
 //     if (with_lock) {
 //       hdr.mtx->lock();
 //     }
@@ -705,102 +835,8 @@ public:
 //     return true;
 //   }
 
-  
-  inline void insert_key(entry_key_t key, char *ptr, int *num_entries,
-                         bool flush = true, bool update_last_index = true) {
-    // update switch_counter
-    // 在shift前,如果上次的操作是删除操作，则先更新switch_counter
-    if (!IS_FORWARD(hdr.switch_counter))
-      ++hdr.switch_counter;
-
-    // FAST
-    if (*num_entries == 0) { // this Page is empty
-      entry *new_entry = (entry *)&records[0];
-      entry *array_end = (entry *)&records[1];
-      new_entry->key = (entry_key_t)key;
-      new_entry->ptr = (char *)ptr;
-
-      array_end->ptr = (char *)NULL;
-
-      if (flush) {
-        if (page_is_inpmem()) {
-          clflush((char *)this, CACHE_LINE_SIZE);
-        }
-      }
-    } else {
-      int i = *num_entries - 1, inserted = 0, to_flush_cnt = 0;
-      records[*num_entries + 1].ptr = records[*num_entries].ptr; 
-      if (flush) {
-        if ((uint64_t) & (records[*num_entries + 1].ptr) % CACHE_LINE_SIZE == 0) {
-          if (page_is_inpmem()) {
-            clflush((char *)&(records[*num_entries + 1].ptr), sizeof(char *));
-          }
-        }
-      }
-
-      // FAST
-      for (i = *num_entries - 1; i >= 0; i--) {
-        //   zzy add
-          // NVM::const_stat.AddCompare();
-        if (key < records[i].key) {
-          records[i + 1].ptr = records[i].ptr;
-          records[i + 1].key = records[i].key;
-
-          if (flush) {
-            uint64_t records_ptr = (uint64_t)(&records[i + 1]);
-
-            int remainder = records_ptr % CACHE_LINE_SIZE;
-            bool do_flush =
-                (remainder == 0) ||
-                ((((int)(remainder + sizeof(entry)) / CACHE_LINE_SIZE) == 1) &&
-                 ((remainder + sizeof(entry)) % CACHE_LINE_SIZE) != 0);
-            if (do_flush) {
-              if (page_is_inpmem()) {
-                clflush((char *)records_ptr, CACHE_LINE_SIZE);
-              }
-              to_flush_cnt = 0;
-            } else
-              ++to_flush_cnt;
-          }
-        } else {
-          records[i + 1].ptr = records[i].ptr;
-          records[i + 1].key = key;
-          records[i + 1].ptr = ptr;
-
-          if (flush) {
-            if (page_is_inpmem()) {
-              clflush((char *)&records[i + 1], sizeof(entry));
-            }
-          }
-          inserted = 1;
-          break;
-        }
-      }
-      if (inserted == 0) {
-        records[0].ptr = (char *)hdr.leftmost_ptr;
-        records[0].key = key;
-        records[0].ptr = ptr;
-        if (flush) {
-          if (page_is_inpmem()) {
-            clflush((char *)&records[0], sizeof(entry));
-          }
-        }
-      }
-    }
-
-    if (update_last_index) {
-      hdr.last_index = (int8_t)(*num_entries);
-      // zzy add
-      if (page_is_inpmem()) {
-        clflush((char *)&(hdr.last_index), sizeof(int8_t));
-      }
-    }
-    ++(*num_entries);
-  }
-
-  // Insert a new key - FAST and FAIR
-  Page *store(SubTree *bt, char *left, entry_key_t key, char *right, bool flush,
-              bool with_lock, Page *invalid_sibling = NULL) {
+  Page * Page::store(SubTree *bt, char *left, entry_key_t key, char *right, bool flush,
+              bool with_lock, Page *invalid_sibling) {
     if (with_lock) {
       hdr.mtx->lock(); // Lock the write lock
     }
@@ -975,8 +1011,8 @@ public:
   }
 
   // Insert a new key - FAST and FAIR
-  Page *store(IndexTree *bt, char *left, entry_key_t key, char *right, bool flush,
-              bool with_lock, Page *invalid_sibling = NULL) {
+  Page * Page::store(IndexTree *bt, char *left, entry_key_t key, char *right, bool flush,
+              bool with_lock, Page *invalid_sibling) {
     if (with_lock) {
       hdr.mtx->lock(); // Lock the write lock
     }
@@ -1094,9 +1130,7 @@ public:
     }
   }
 
-  // Search keys with linear search
-  void linear_search_range(entry_key_t min, entry_key_t max,
-                           unsigned long *buf) {
+  void Page::linear_search_range(entry_key_t min, entry_key_t max, unsigned long *buf) {
     int i, off = 0;
     uint8_t previous_switch_counter;
     Page *current = this;
@@ -1181,7 +1215,7 @@ public:
     }
   }
 
-  char *linear_search(entry_key_t key) {
+  char * Page::linear_search(entry_key_t key) {
     int i = 1;
     uint8_t previous_switch_counter;
     char *ret = NULL;
@@ -1327,8 +1361,7 @@ public:
     return NULL;
   }
 
-  // print a node
-  void print() {
+  void Page::print() {
     if (hdr.leftmost_ptr == NULL)
       printf("[%d] leaf %p \n", this->hdr.level, this);
     else
@@ -1352,7 +1385,7 @@ public:
     printf("\n");
   }
 
-  void printAll() {
+  void Page::printAll() {
     if (hdr.leftmost_ptr == NULL) {
       printf("printing leaf node: ");
       print();
@@ -1366,7 +1399,7 @@ public:
     }
   }
 
-  void CalculateSapce(uint64_t &space) {
+  void Page::CalculateSapce(uint64_t &space) {
       if(hdr.leftmost_ptr==NULL) {
           space += PAGESIZE;
       } else {
@@ -1378,8 +1411,7 @@ public:
       }
   }
 
-  // Search keys with linear search
-  void linear_search_range(entry_key_t min, entry_key_t max, 
+  void Page::linear_search_range(entry_key_t min, entry_key_t max, 
       std::vector<std::pair<uint64_t, uint64_t>> &result, int &size) {
     int i, off = 0;
     uint8_t previous_switch_counter;
@@ -1502,7 +1534,7 @@ public:
     size = off;
   }
 
-  void linear_search_range(entry_key_t min, 
+  void Page::linear_search_range(entry_key_t min, 
         entry_key_t max, void **values, int &size) {
     int i, off = 0;
     uint8_t previous_switch_counter;
@@ -1620,7 +1652,4 @@ public:
     }
     size = off;
   }
-
-};
-
 }

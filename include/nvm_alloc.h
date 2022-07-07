@@ -12,7 +12,7 @@
 
 namespace NVM
 {
-#define TEST_PMEM_SIZE
+// #define TEST_PMEM_SIZE
 #ifdef TEST_PMEM_SIZE
     extern uint64_t pmem_size;
 #endif
