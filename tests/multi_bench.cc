@@ -22,6 +22,31 @@ using ycsbc::KvDB;
 
 using namespace util;
 
+// 实时获取程序占用的内存，单位：kb。
+size_t physical_memory_used_by_process()
+{
+    FILE* file = fopen("/proc/self/status", "r");
+    int result = -1;
+    char line[128];
+
+    while (fgets(line, 128, file) != nullptr) {
+        if (strncmp(line, "VmRSS:", 6) == 0) {
+            int len = strlen(line);
+
+            const char* p = line;
+            for (; std::isdigit(*p) == false; ++p) {}
+
+            line[len - 3] = 0;
+            result = atoi(p);
+
+            break;
+        }
+    }
+
+    fclose(file);
+    return result;
+}
+
 void clear_cache() {
   // Remove cache
   int size = 256 * 1024 * 1024;
@@ -265,17 +290,19 @@ int main(int argc, char *argv[]) {
     break;
   }
 
-    NVM::env_init();
-    KvDB *db = nullptr;
-    if (dbName == "fastfair")
-    {
-        db = new nnbtree::fastfairDB();
-    } else if (dbName == "nnbtree") {
-        db = new nnbtree::nnbtreeDB();
-    } else {
-        assert(false);
-    }
+  size_t init_dram_space_use = physical_memory_used_by_process();
+  std::cout << "before newdb, dram space use: " << init_dram_space_use / 1024.0 /1024.0  << " GB" << std::endl;
 
+  NVM::env_init();
+  KvDB *db = nullptr;
+  if (dbName == "fastfair")
+  {
+    db = new nnbtree::fastfairDB();
+  } else if (dbName == "nnbtree") {
+    db = new nnbtree::nnbtreeDB();
+  } else {
+    assert(false);
+  }
 
   db->Init();
   nnbtree::Timer timer;
@@ -314,12 +341,16 @@ int main(int argc, char *argv[]) {
                     assert(0);
                 }
 
-                if(thread_id == 0 && (j + 1) % 1000000 == 0) std::cerr << "Operate: " << j + 1 << '\r';  
+                if(thread_id == 0 && (j + 1) % 1000000 == 0) {
+                  std::cout << "Operate: " << j + 1 << '\r' << std::endl;  
+                  std::cout << "dram space use: " << (physical_memory_used_by_process() - init_dram_space_use) / 1024.0 /1024.0  << " GB" << std::endl;
+                } 
             }
         });
     }
-    for (auto& t : threads)
-        t.join();
+    for (auto& t : threads) {
+      t.join();
+    }
 
     timer.Record("stop");
     us_times = timer.Microsecond("stop", "start");
@@ -353,8 +384,9 @@ int main(int argc, char *argv[]) {
             }
         });
     }
-    for (auto& t : threads)
-        t.join();
+    for (auto& t : threads) {
+      t.join();
+    }
         
     timer.Record("stop");
     us_times = timer.Microsecond("stop", "start");
@@ -368,8 +400,8 @@ int main(int argc, char *argv[]) {
   uint64_t *new_test = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.9);
   
   clear_cache();
-  std::cout << "getchar" << std::endl;
-  getchar();
+  // std::cout << "getchar" << std::endl;
+  // getchar();
 
   {
      // Get
@@ -396,8 +428,9 @@ int main(int argc, char *argv[]) {
             }
         });
     }
-    for (auto& t : threads)
-        t.join();
+    for (auto& t : threads) {
+      t.join();
+    }
         
     timer.Record("stop");
     us_times = timer.Microsecond("stop", "start");

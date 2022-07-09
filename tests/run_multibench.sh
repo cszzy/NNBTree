@@ -13,43 +13,43 @@ function Run() {
     Loadname="ycsb-400m-zipf0.9"
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
     echo "----------------"
     sleep 60
 
-    rm -rf /mnt/AEP0/*
-    Loadname="longlat-400m-zipf0.9"
-    date | tee multi-${dbname}-${Loadname}-th${thread}.txt
-    # gdb --args \
-    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-        --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
-        -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-    echo "----------------"
-    sleep 60
+    # rm -rf /mnt/AEP0/*
+    # Loadname="longlat-400m-zipf0.9"
+    # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
+    # # gdb --args \
+    # timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    #     --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    # echo "----------------"
+    # sleep 60
 
-    rm -rf /mnt/AEP0/*
-    Loadname="longtitudes-200m-zipf0.9"
-    loadnum=200000000
-    date | tee multi-${dbname}-${Loadname}-th${thread}.txt
-    # gdb --args \
-    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-        --loadstype 5 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
-        -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-    echo "----------------"
-    sleep 60
+    # rm -rf /mnt/AEP0/*
+    # Loadname="longtitudes-200m-zipf0.9"
+    # loadnum=200000000
+    # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
+    # # gdb --args \
+    # timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    #     --loadstype 5 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    # echo "----------------"
+    # sleep 60
 
-    rm -rf /mnt/AEP0/*
-    Loadname="lognormal-150m-zipf0.9"
-    loadnum=130000000
-    date | tee multi-${dbname}-${Loadname}-th${thread}.txt
-    # gdb --args \
-    numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-        --loadstype 6 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
-        -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-    echo "----------------"
-    sleep 60
+    # rm -rf /mnt/AEP0/*
+    # Loadname="lognormal-150m-zipf0.9"
+    # loadnum=130000000
+    # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
+    # # gdb --args \
+    # timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    #     --loadstype 6 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    # echo "----------------"
+    # sleep 60
 }
 
 # DBName: combotree fastfair pgm xindex alex
@@ -73,7 +73,7 @@ do
 done
 
 # dbname="fastfair"
-# for thread in 32
+# for thread in 4 8 16 24 32
 # do
 #     Run $dbname $loadnum $opnum $scansize $thread
 # done

@@ -53,10 +53,11 @@ static inline void clflush(char *data, int len) {
 // const size_t NVM_ValueSize = 256;
 void alloc_memalign(void **ret, size_t alignment, size_t size) {
   *ret =  NVM::data_alloc->alloc(size);
+  // posix_memalign(ret, alignment, size);
   assert(*ret);
 }
 
-class __attribute__((aligned(64))) Spinlock {
+class Spinlock {
   public:
   Spinlock() = default;
   Spinlock(const Spinlock&) = delete;
@@ -78,7 +79,7 @@ class __attribute__((aligned(64))) Spinlock {
 
   private:
   std::atomic_flag flag = ATOMIC_FLAG_INIT;
-  char padding[63];
+  // char padding[63];
 };
 
 class page;
@@ -120,16 +121,16 @@ private:
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?
   int16_t last_index;     // 2 bytes // 指示最后条目的位置
-  // std::mutex *mtx;        // 8 bytes // 写独占
-  Spinlock *mtx;
+  std::mutex *mtx;        // 8 bytes // 写独占
+  // Spinlock mtx;
 
   friend class page;
   friend class btree;
 
 public:
   header() {
-    // mtx = new std::mutex();
-    mtx = new Spinlock();
+    mtx = new std::mutex();
+    // mtx = new Spinlock();
 
     leftmost_ptr = NULL;
     sibling_ptr = NULL;

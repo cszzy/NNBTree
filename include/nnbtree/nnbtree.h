@@ -19,6 +19,8 @@
 #include "statistics.h"
 #include "common.h"
 
+#define USE_SPINLOCK
+
 #define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
@@ -26,7 +28,7 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
+#define MAX_SUBTREE_HEIGHT 3 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
 
@@ -54,7 +56,7 @@ class Spinlock {
 
   private:
   std::atomic_flag flag{ATOMIC_FLAG_INIT};
-  char padding[63];
+  // char padding[63];
 };
 
 static inline void clflush(char *data, int len) {
@@ -76,11 +78,17 @@ class Page;
 
 class SubTree {
 private:
-  int height;
+  int height; // 4B
+  char padding[4];
   // char *root; // 整个B+树的根
-  char *sub_root; // subtree的根
-  // std::mutex subtree_lock; // 每个子树一个锁
+  char *sub_root; // 8B 正在使用的subtree的根
+  char *dram_root; // 8B
+#ifndef USE_SPINLOCK
+  std::mutex subtree_lock; // 每个子树一个锁
+#else
   Spinlock subtree_lock;
+#endif
+
 public:
   SubTree();
   void setNewRoot(char *); // 设置sub_root
@@ -240,14 +248,20 @@ enum PageType : uint8_t {
 class header {
 private:
   Page *leftmost_ptr;     // 8 bytes // 非叶子节点最左侧子节点的指针
-  Page *sibling_ptr;      // 8 bytes // 类似blink Tree，内部节点也存储兄弟节点指针
+  Page *right_sibling_ptr;      // 8 bytes // 类似blink Tree，右兄弟结点指针
+  // Page *left_sibling_ptr;  // 8 bytes // 类似blink Tree，右兄弟结点指针
+#ifndef USE_SPINLOCK
   std::mutex *mtx;        // 8 bytes // 写独占
+#else
+  Spinlock *mtx;
+#endif
   uint32_t level;         // 4 bytes // 叶节点level为0, 向上累加
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?实际没有节点合并, 用不到
   int8_t last_index;      // 1 bytes // 指示最后条目的位置
   uint8_t page_type;      // 1 bytes // 指示page类型, 0: nvm_subtree_page, 1: dram_cachetree_page, 2: dram_indextree_page
-  // Spinlock *mtx;
+  // char padding[8]; // 填充
+  
 
   friend class Page;
   friend class SubTree;
@@ -255,12 +269,12 @@ private:
 
 public:
   header() {
-    mtx = new std::mutex();
+    // mtx = new std::mutex();
     // mtx = new Spinlock();
     // std::cout << " cons " << mtx << std::endl << std::flush;
 
     leftmost_ptr = NULL;
-    sibling_ptr = NULL;
+    right_sibling_ptr = NULL;
     switch_counter = 0;
     level = 0;
     last_index = -1;
@@ -306,6 +320,13 @@ public:
     hdr.level = level;
     records[0].ptr = NULL;
     hdr.page_type = (uint8_t)page_type_;
+    if (page_type_ == PageType::DRAM_INDEXTREE_PAGE || page_type_ == PageType::INDEXTREE_LAST_LEVEL_PAGE) {
+#ifndef USE_SPINLOCK
+      hdr.mtx = new std::mutex();
+#else
+      hdr.mtx = new Spinlock();
+#endif
+    }
   }
 
   // this is called when tree grows
@@ -319,6 +340,13 @@ public:
 
     hdr.last_index = 0;
     hdr.page_type = (uint8_t)page_type_;
+    if (page_type_ == PageType::DRAM_INDEXTREE_PAGE || page_type_ == PageType::INDEXTREE_LAST_LEVEL_PAGE) {
+#ifndef USE_SPINLOCK
+      hdr.mtx = new std::mutex();
+#else
+      hdr.mtx = new Spinlock();
+#endif
+    }
 
     if (page_is_inpmem()) {
       clflush((char *)this, sizeof(Page));
@@ -336,6 +364,13 @@ public:
 
     hdr.last_index = 0;
     hdr.page_type = (uint8_t)page_type_;
+    if (page_type_ == PageType::DRAM_INDEXTREE_PAGE || page_type_ == PageType::INDEXTREE_LAST_LEVEL_PAGE) {
+#ifndef USE_SPINLOCK
+      hdr.mtx = new std::mutex();
+#else
+      hdr.mtx = new Spinlock();
+#endif
+    }
 
     if (page_is_inpmem()) {
       clflush((char *)this, sizeof(Page));
@@ -401,6 +436,7 @@ public:
     else {
       // int res = posix_memalign(&ret, 8, size);
       ret = malloc(size);
+      assert(ret);
       // p_assert(res == 0, "alloc fail, res: %d, size: %ld", res, size);
     }
     return ret;
@@ -620,7 +656,7 @@ public:
 //       // This node is root
 //       if (this == (Page *)bt->root) {
 //         if (hdr.level > 0) { // 根节点非叶子节点
-//           if (num_entries_before == 1 && !hdr.sibling_ptr) {
+//           if (num_entries_before == 1 && !hdr.right_sibling_ptr) {
 //             bt->root = (char *)hdr.leftmost_ptr;
 //             clflush((char *)&(bt->root), sizeof(char *));
 
@@ -668,12 +704,12 @@ public:
 //       }
 
 //       if (!with_lock) {
-//         hdr.sibling_ptr->hdr.mtx->lock();
+//         hdr.right_sibling_ptr->hdr.mtx->lock();
 //       }
-//       hdr.sibling_ptr->remove(bt, hdr.sibling_ptr->records[0].key, true,
+//       hdr.right_sibling_ptr->remove(bt, hdr.right_sibling_ptr->records[0].key, true,
 //                               with_lock);
 //       if (!with_lock) {
-//         hdr.sibling_ptr->hdr.mtx->unlock();
+//         hdr.right_sibling_ptr->hdr.mtx->unlock();
 //       }
 //       return true;
 //     }
@@ -682,14 +718,14 @@ public:
 //       left_sibling->hdr.mtx->lock();
 //     }
 
-//     while (left_sibling->hdr.sibling_ptr != this) {
+//     while (left_sibling->hdr.right_sibling_ptr != this) {
 //       if (with_lock) {
-//         Page *t = left_sibling->hdr.sibling_ptr;
+//         Page *t = left_sibling->hdr.right_sibling_ptr;
 //         left_sibling->hdr.mtx->unlock();
 //         left_sibling = t;
 //         left_sibling->hdr.mtx->lock();
 //       } else
-//         left_sibling = left_sibling->hdr.sibling_ptr;
+//         left_sibling = left_sibling->hdr.right_sibling_ptr;
 //     }
 
 //     int num_entries = count();
@@ -754,7 +790,7 @@ public:
 
 //         Page *new_sibling = new Page(hdr.level);
 //         new_sibling->hdr.mtx->lock();
-//         new_sibling->hdr.sibling_ptr = hdr.sibling_ptr;
+//         new_sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
 
 //         int num_dist_entries = num_entries - m;
 //         int new_sibling_cnt = 0;
@@ -772,8 +808,8 @@ public:
 
 //           clflush((char *)(new_sibling), sizeof(Page));
 
-//           left_sibling->hdr.sibling_ptr = new_sibling;
-//           clflush((char *)&(left_sibling->hdr.sibling_ptr), sizeof(Page *));
+//           left_sibling->hdr.right_sibling_ptr = new_sibling;
+//           clflush((char *)&(left_sibling->hdr.right_sibling_ptr), sizeof(Page *));
 
 //           parent_key = new_sibling->records[0].key;
 //         } else {
@@ -795,8 +831,8 @@ public:
 //           }
 //           clflush((char *)(new_sibling), sizeof(Page));
 
-//           left_sibling->hdr.sibling_ptr = new_sibling;
-//           clflush((char *)&(left_sibling->hdr.sibling_ptr), sizeof(Page *));
+//           left_sibling->hdr.right_sibling_ptr = new_sibling;
+//           clflush((char *)&(left_sibling->hdr.right_sibling_ptr), sizeof(Page *));
 //         }
 
 //         if (left_sibling == ((Page *)bt->root)) {
@@ -823,8 +859,8 @@ public:
 //                                  &left_num_entries);
 //       }
 
-//       left_sibling->hdr.sibling_ptr = hdr.sibling_ptr;
-//       clflush((char *)&(left_sibling->hdr.sibling_ptr), sizeof(Page *));
+//       left_sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
+//       clflush((char *)&(left_sibling->hdr.right_sibling_ptr), sizeof(Page *));
 //     }
 
 //     if (with_lock) {
@@ -849,9 +885,9 @@ public:
     }
 
     // If this node has a sibling node,
-    if (hdr.sibling_ptr && (hdr.sibling_ptr != invalid_sibling)) {
+    if (hdr.right_sibling_ptr && (hdr.right_sibling_ptr != invalid_sibling)) {
       // Compare this key with the first key of the sibling
-      if (key > hdr.sibling_ptr->records[0].key) { 
+      if (key > hdr.right_sibling_ptr->records[0].key) { 
         // 如果兄弟节点的最小key大于要插入的key,
         // 则在兄弟节点执行插入，对应论文Fair算法中更新父节点时出现并发Insert的情况
         // zzy add
@@ -859,7 +895,7 @@ public:
         if (with_lock) {
           hdr.mtx->unlock(); // Unlock the write lock
         }
-        // return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
+        // return hdr.right_sibling_ptr->store(bt, NULL, key, right, true, with_lock,
         //                               invalid_sibling);
         return NULL;
       }
@@ -904,12 +940,12 @@ public:
         sibling->hdr.leftmost_ptr = (Page *)records[m].ptr;
       }
 
-      sibling->hdr.sibling_ptr = hdr.sibling_ptr;
+      sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
       if (page_is_inpmem()) {
         clflush((char *)sibling, sizeof(Page));
       }
       
-      hdr.sibling_ptr = sibling;
+      hdr.right_sibling_ptr = sibling;
       if (page_is_inpmem()) {
         clflush((char *)&hdr, sizeof(hdr));
       }
@@ -1025,9 +1061,9 @@ public:
     }
 
     // If this node has a sibling node,
-    if (hdr.sibling_ptr && (hdr.sibling_ptr != invalid_sibling)) {
+    if (hdr.right_sibling_ptr && (hdr.right_sibling_ptr != invalid_sibling)) {
       // Compare this key with the first key of the sibling
-      if (key > hdr.sibling_ptr->records[0].key) { 
+      if (key > hdr.right_sibling_ptr->records[0].key) { 
         // 如果兄弟节点的最小key大于要插入的key,
         // 则在兄弟节点执行插入，对应论文Fair算法中更新父节点时出现并发Insert的情况
         // zzy add
@@ -1035,7 +1071,7 @@ public:
         if (with_lock) {
           hdr.mtx->unlock(); // Unlock the write lock
         }
-        return hdr.sibling_ptr->store(bt, NULL, key, right, true, with_lock,
+        return hdr.right_sibling_ptr->store(bt, NULL, key, right, true, with_lock,
                                       invalid_sibling);
       }
     }
@@ -1077,9 +1113,9 @@ public:
         sibling->hdr.leftmost_ptr = (Page *)records[m].ptr;
       }
 
-      sibling->hdr.sibling_ptr = hdr.sibling_ptr;
+      sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
       
-      hdr.sibling_ptr = sibling;
+      hdr.right_sibling_ptr = sibling;
 
       // set to NULL
       if (IS_FORWARD(hdr.switch_counter)) // XXX: 注意insert操作在设置完sibling指针即增加switch_counter
@@ -1211,7 +1247,7 @@ public:
         }
       } while (previous_switch_counter != current->hdr.switch_counter); // 发生了修改操作，重试
 
-      current = current->hdr.sibling_ptr; // 移动到下一个page
+      current = current->hdr.right_sibling_ptr; // 移动到下一个page
     }
   }
 
@@ -1288,7 +1324,7 @@ public:
     //   zzy add
     // NVM::const_stat.AddCompare();
 
-      if ((t = (char *)hdr.sibling_ptr) && key >= ((Page *)t)->records[0].key) {
+      if ((t = (char *)hdr.right_sibling_ptr) && key >= ((Page *)t)->records[0].key) {
         return t;
       }
         
@@ -1344,7 +1380,7 @@ public:
         }
       } while (hdr.switch_counter != previous_switch_counter);
 
-      if ((t = (char *)hdr.sibling_ptr) != NULL) {
+      if ((t = (char *)hdr.right_sibling_ptr) != NULL) {
         //   zzy add
         // NVM::const_stat.AddCompare();
         if (key >= ((Page *)t)->records[0].key) {
@@ -1380,7 +1416,7 @@ public:
     for (int i = 0; records[i].ptr != NULL; ++i)
       printf("%ld,%p ", records[i].key, records[i].ptr);
 
-    printf("%p ", hdr.sibling_ptr);
+    printf("%p ", hdr.right_sibling_ptr);
 
     printf("\n");
   }
@@ -1529,7 +1565,7 @@ public:
         }
       } while (previous_switch_counter != current->hdr.switch_counter); // 发生了修改操作，重试
 
-      current = current->hdr.sibling_ptr; // 移动到下一个page
+      current = current->hdr.right_sibling_ptr; // 移动到下一个page
     }
     size = off;
   }
@@ -1648,7 +1684,7 @@ public:
         }
       } while (previous_switch_counter != current->hdr.switch_counter); // 发生了修改操作，重试
 
-      current = current->hdr.sibling_ptr; // 移动到下一个page
+      current = current->hdr.right_sibling_ptr; // 移动到下一个page
     }
     size = off;
   }

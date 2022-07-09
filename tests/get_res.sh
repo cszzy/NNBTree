@@ -53,11 +53,11 @@ function get_multi_get()
     cat $1 | grep "Metic-Get" | grep "iops" | awk '{print $7/1e+06}'
 }
 
-dbname=nnbtree
-# workload=ycsb-400m
+dbname=fastfair
+workload=ycsb-400m
 # workload=longlat-400m
 # workload=longtitudes-200m
-workload=lognormal-150m
+# workload=lognormal-150m
 
 # logfile="microbench-$dbname-$workload.txt"
 

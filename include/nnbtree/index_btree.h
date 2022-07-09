@@ -33,7 +33,7 @@ char *IndexTree::btree_search(entry_key_t key) {
   }
 
   SubTree *t = (SubTree*)(p->linear_search(key));
-  while ((Page*)t == p->hdr.sibling_ptr) {
+  while ((Page*)t == p->hdr.right_sibling_ptr) {
     // goto begin;
     p = (Page *)t;
     t = (SubTree*)(p->linear_search(key));
@@ -54,7 +54,7 @@ void IndexTree::btree_insert(entry_key_t key, char *right) { // need to be strin
   }
 
   SubTree *t = (SubTree*)(p->linear_search(key));
-  while ((Page*)t == p->hdr.sibling_ptr) {
+  while ((Page*)t == p->hdr.right_sibling_ptr) {
     // goto begin;
     p = (Page *)t;
     t = (SubTree*)(p->linear_search(key));;
@@ -203,7 +203,7 @@ void IndexTree::printAll() {
         total_keys += sibling->hdr.last_index + 1;
       }
       // sibling->print();
-      sibling = sibling->hdr.sibling_ptr;
+      sibling = sibling->hdr.right_sibling_ptr;
     }
     printf("-----------------------------------------\n");
     leftmost = leftmost->hdr.leftmost_ptr;

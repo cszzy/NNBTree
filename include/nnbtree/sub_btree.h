@@ -56,16 +56,16 @@ char *SubTree::btree_search(entry_key_t key) {
 
   while (p->hdr.leftmost_ptr != NULL) {
     Page *t = (Page *)p->linear_search(key);
-    // p_assert(t != p->hdr.sibling_ptr, "should not happen");
-    assert(t != p->hdr.sibling_ptr);
-    if (t == p->hdr.sibling_ptr) {
+    // p_assert(t != p->hdr.right_sibling_ptr, "should not happen");
+    assert(t != p->hdr.right_sibling_ptr);
+    if (t == p->hdr.right_sibling_ptr) {
       std::cout << "azheazhe" << std::endl;
     }
     p = t;
   }
 
   Page *t = NULL;
-  while ((t = (Page *)p->linear_search(key)) == p->hdr.sibling_ptr) {
+  while ((t = (Page *)p->linear_search(key)) == p->hdr.right_sibling_ptr) {
     // p_assert(false, "should not happen");
     // assert(false);
     std::cout << "azheazheazhe" << std::endl;
@@ -93,7 +93,7 @@ retry:
 
   while (p->hdr.leftmost_ptr != NULL) {
     Page *t = (Page *)p->linear_search(key);
-    if (t == p->hdr.sibling_ptr) { // XXX : very important, 不能进入另一颗子树
+    if (t == p->hdr.right_sibling_ptr) { // XXX : very important, 不能进入另一颗子树
       // p_assert(false, "should not happen");
       subtree_lock.unlock();
       return index_tree_root->btree_insert(key, right);
@@ -140,12 +140,12 @@ void SubTree::btree_delete(entry_key_t key) {
 
   while (p->hdr.leftmost_ptr != NULL) { // 遍历到叶
     Page *t = (Page *)p->linear_search(key);
-    p_assert(t != p->hdr.sibling_ptr, "should not happen");
+    p_assert(t != p->hdr.right_sibling_ptr, "should not happen");
     p = t;
   }
 
   Page *t = NULL;
-  while ((t = (Page *)p->linear_search(key)) == p->hdr.sibling_ptr) {
+  while ((t = (Page *)p->linear_search(key)) == p->hdr.right_sibling_ptr) {
     p_assert(false, "should not happen");
     p = t;
     if (!p)
@@ -280,7 +280,7 @@ void SubTree::printAll() {
         total_keys += sibling->hdr.last_index + 1;
       }
       sibling->print();
-      sibling = sibling->hdr.sibling_ptr;
+      sibling = sibling->hdr.right_sibling_ptr;
     }
     printf("-----------------------------------------\n");
     leftmost = leftmost->hdr.leftmost_ptr;
