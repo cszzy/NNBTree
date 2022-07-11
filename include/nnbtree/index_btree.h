@@ -37,7 +37,6 @@ char *IndexTree::btree_search(entry_key_t key) {
     // goto begin;
     p = (Page *)t;
     t = (SubTree*)(p->linear_search(key));
-    std::cout << "111111111" << std::endl;
   }
 
   return t->btree_search(key);

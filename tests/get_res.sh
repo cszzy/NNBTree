@@ -53,9 +53,9 @@ function get_multi_get()
     cat $1 | grep "Metic-Get" | grep "iops" | awk '{print $7/1e+06}'
 }
 
-dbname=fastfair
-workload=ycsb-400m
-# workload=longlat-400m
+dbname=nnbtree
+# workload=ycsb-400m
+workload=longlat-400m
 # workload=longtitudes-200m
 # workload=lognormal-150m
 
@@ -64,8 +64,8 @@ workload=ycsb-400m
 for thread in 4 8 16 24 32
 do
     logfile="multi-$dbname-$workload-zipf0.9-th$thread.txt"
-    get_multi_get $logfile $dbname
-    # get_multi_put $logfile $dbname
+    get_multi_put $logfile $dbname
+    # get_multi_get $logfile $dbname
 done
 
 # scalability_get_write_iops $logfile $dbname
