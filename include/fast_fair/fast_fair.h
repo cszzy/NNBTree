@@ -30,6 +30,8 @@
 #include <vector>
 
 #include "nvm_alloc.h"
+#include "numa_config.h"
+#include "timer.h"
 
 #define PAGESIZE 256
 
@@ -52,7 +54,8 @@ static inline void clflush(char *data, int len) {
 
 // const size_t NVM_ValueSize = 256;
 void alloc_memalign(void **ret, size_t alignment, size_t size) {
-  *ret =  NVM::data_alloc->alloc(size);
+  // *ret =  NVM::data_alloc->alloc(size);
+  *ret = nnbtree::index_pmem_alloc(size);
   // posix_memalign(ret, alignment, size);
   assert(*ret);
 }
@@ -109,6 +112,8 @@ public:
   void btree_search_range(entry_key_t, entry_key_t, void **, int &); 
   void PrintInfo();
   void CalculateSapce(uint64_t &space);
+
+  void levelTraverse();
 
   friend class page;
 };
@@ -1454,6 +1459,35 @@ void btree::CalculateSapce(uint64_t &space) {
     if(root != nullptr) {
         ((page*)root)->CalculateSapce(space);
     }
+}
+
+void btree::levelTraverse() {
+  int level = 0;
+  if(root != nullptr) {
+    page *p = (page *)root;
+    while (p->hdr.leftmost_ptr != NULL) {
+      int i = 1;
+      page *t = p;
+      while (t->hdr.sibling_ptr != NULL) {
+        t = t->hdr.sibling_ptr;
+        i++;
+      }
+      std::cout << "level" << level++ << ", page_nums: " << i << std::endl;
+      p = p->hdr.leftmost_ptr;
+    }
+      
+    nnbtree::Timer fastfair_timer;
+    fastfair_timer.Record("ss");
+    int i = 0;
+    while (p->hdr.sibling_ptr != NULL) {
+      p = p->hdr.sibling_ptr;
+      i++;
+    }
+    fastfair_timer.Record("ee");
+    std::cout << "level" << level++ << ", page_nums: " << i << std::endl;
+    std::cout << "scan use time: " << (double)fastfair_timer.Microsecond("ee", "ss") / 1000000.0 << " seconds" << std::endl;
+    fastfair_timer.Clear();
+  }
 }
 
 void btree::PrintInfo() {

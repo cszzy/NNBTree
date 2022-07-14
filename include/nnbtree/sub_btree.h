@@ -55,13 +55,15 @@ char *SubTree::btree_search(entry_key_t key) {
   Page *p = (Page *)sub_root;
 
   while (p->hdr.leftmost_ptr != NULL) {
-    Page *t = (Page *)p->linear_search(key);
-    // p_assert(t != p->hdr.right_sibling_ptr, "should not happen");
-    assert(t != p->hdr.right_sibling_ptr);
-    if (t == p->hdr.right_sibling_ptr) {
-      std::cout << "azheazhe" << std::endl;
-    }
-    p = t;
+    // Page *t = (Page *)p->linear_search(key);
+    // // p_assert(t != p->hdr.right_sibling_ptr, "should not happen");
+    // assert(t != p->hdr.right_sibling_ptr);
+    // if (t == p->hdr.right_sibling_ptr) {
+    //   std::cout << "azheazhe" << std::endl;
+    // }
+    // p = t;
+
+    p = (Page *)p->linear_search(key);
   }
 
   Page *t = NULL;

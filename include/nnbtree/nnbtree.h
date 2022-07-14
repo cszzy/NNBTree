@@ -18,8 +18,14 @@
 #include "nvm_alloc.h"
 #include "statistics.h"
 #include "common.h"
+#include "numa_config.h"
+#include "tree_log.h"
 
-#define USE_SPINLOCK
+#define USE_SPINLOCK // 使用spinlock还是mutex
+
+#define CACHE_SUBTREE // 是否开启子树缓存
+
+#define MIGRATE_SUBTREE // 是否开启子树迁移
 
 #define PAGESIZE 256
 
@@ -28,7 +34,7 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
+#define MAX_SUBTREE_HEIGHT 3 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
 
@@ -59,30 +65,42 @@ class Spinlock {
   // char padding[63];
 };
 
-static inline void clflush(char *data, int len) {
-    NVM::Mem_persist(data, len);
-}
-
 // const size_t NVM_ValueSize = 256;
 static inline void alloc_memalign(void **ret, size_t alignment, size_t size) {
 #ifdef USE_MEM
   int res = posix_memalign(ret, alignment, size);
   p_assert(res == 0, "mem alloc fail");
 #else
-  *ret =  NVM::data_alloc->alloc(size);
+  // *ret =  NVM::data_alloc->alloc(size);
+  *ret = nnbtree::index_pmem_alloc(size);
   p_assert(*ret, "mem/pmem alloc fail");
 #endif
 }
 
 class Page;
 
+enum SubTreeStatus : uint8_t {
+  IN_NVM,
+  IN_DRAM,
+  NEED_MOVE_TO_NVM,
+  NEED_MOVE_TO_DRAM,
+  IS_DELETED, // 防止迁移已经完全删除的子树
+};
+
 class SubTree {
 private:
   int height; // 4B
-  char padding[4];
+  int is_indram; //标识整棵子树是否在dram中
   // char *root; // 整个B+树的根
   char *sub_root; // 8B 正在使用的subtree的根
-  char *dram_root; // 8B
+  char *nvm_root; // 8B 当子树移到内存时，用此记录nvm的root
+  SubTree *left_sibling_subtree; //左子树
+  SubTree *right_sibling_subtree; //右子树
+  uint64_t read_times[numa_node_num]; // 各numa节点写操作次数
+  uint64_t write_times[numa_node_num]; // 各numa节点读操作次数
+  TreeLog *log; // 写日志
+  bool is_dirty; // 脏页写回NVM
+  uint64_t hotness; // 实际记录的是上一周期的热度
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
@@ -110,6 +128,9 @@ public:
   void PrintInfo();
   void CalculateSapce(uint64_t &space);
   Page *getRoot();
+
+  void move_to_nvm(); // 缓存
+  void move_to_dram(); // 淘汰
 
   void lock_subtree();
   void unlock_subtree();
@@ -916,7 +937,7 @@ public:
       // overflow
       // create a new node
       Page *sibling = nullptr;
-      if (page_is_inpmem()) {
+      if (likely(page_is_inpmem())) {
         sibling = new(true) Page(PageType::NVM_SUBTREE_PAGE, hdr.level);
       } else {
         sibling = new(false) Page((PageType)this->hdr.page_type, hdr.level);
@@ -941,12 +962,12 @@ public:
       }
 
       sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
-      if (page_is_inpmem()) {
+      if (likely(page_is_inpmem())) {
         clflush((char *)sibling, sizeof(Page));
       }
       
       hdr.right_sibling_ptr = sibling;
-      if (page_is_inpmem()) {
+      if (likely(page_is_inpmem())) {
         clflush((char *)&hdr, sizeof(hdr));
       }
 
@@ -957,12 +978,12 @@ public:
         ++hdr.switch_counter;
       records[m].ptr = NULL;
 
-      if (page_is_inpmem()) {
+      if (likely(page_is_inpmem())) {
         clflush((char *)&records[m], sizeof(entry));
       }
 
       hdr.last_index = (int8_t)(m - 1);
-      if (page_is_inpmem()) {
+      if (likely(page_is_inpmem())) {
         clflush((char *)&(hdr.last_index), sizeof(int8_t));
       }
       

@@ -32,7 +32,6 @@ virtual ~fastfairDB()
 
 void Init()
 {
-    NVM::data_init();
     tree_ = new btree_t();
 #ifdef TEST_PMEM_SIZE
     NVM::pmem_size = 0;
@@ -46,6 +45,10 @@ void Info()
 #endif
     tree_->PrintInfo();
     NVM::show_stat();
+    // uint64_t space = 0;
+    // tree_->CalculateSapce(space);
+    // std::cout << "calculate space: " << space * 1.0 / 1024 / 1024/ 1024 << " GB" << std::endl;
+    // tree_->levelTraverse();
 }
 
 void Bulk_load(const std::pair<uint64_t, uint64_t> data[], int size)
@@ -116,7 +119,6 @@ virtual ~nnbtreeDB()
 
 void Init()
 {
-    NVM::data_init();
     tree_ = new btree_t();
 #ifdef TEST_PMEM_SIZE
     NVM::pmem_size = 0;

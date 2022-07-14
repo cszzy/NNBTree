@@ -42,7 +42,6 @@ int main(int argc, char **argv) {
   }
 
   NVM::env_init();
-  NVM::data_init();
 
   nnbtree::SubTree *bt;
   bt = new nnbtree::SubTree();

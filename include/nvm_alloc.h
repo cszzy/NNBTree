@@ -23,7 +23,7 @@ namespace NVM
     static inline void *PmemMapFile(const std::string &file_name, const size_t file_size, size_t *len)
     {
         int is_pmem;
-        std::filesystem::remove(file_name);
+        remove(file_name.c_str());
         void *pmem_addr_ = pmem_map_file(file_name.c_str(), file_size,
                                          PMEM_FILE_CREATE | PMEM_FILE_EXCL, 0666, len, &is_pmem);
         assert(is_pmem == 1);
@@ -421,7 +421,6 @@ namespace NVM
     extern Stat const_stat;
 
     int env_init();
-    int data_init();
     void env_exit();
     void show_stat();
 

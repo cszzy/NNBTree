@@ -317,6 +317,7 @@ int main(int argc, char *argv[])
   }
 
   NVM::env_init();
+
   KvDB *db = nullptr;
   if (dbName == "fastfair")
   {

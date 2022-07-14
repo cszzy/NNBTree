@@ -18,16 +18,13 @@ include_directories(
 set(NNBTREE_HEAD_LIST 
   include
   include/nnbtree
-)
-
-set(FAST_FAIR_HEAD_LIST 
-  include
   include/fast_fair
 )
 
 set(NNBTREE_SRC
   src/index_btree.cc
   src/environment.cc
+  src/numa_config.cc
 )
 
 add_library(nnbtree SHARED ${NNBTREE_SRC})
@@ -45,7 +42,7 @@ target_link_libraries(simple_test_mixed nnbtree rt m)
 # microbench
 add_executable(microbench tests/micro_bench.cc)
 target_link_libraries(microbench nnbtree)
-target_include_directories(microbench PUBLIC ${FAST_FAIR_HEAD_LIST})
+target_include_directories(microbench PUBLIC ${NNBTREE_HEAD_LIST})
 add_test(microbench microbench)
 
 # multibench
