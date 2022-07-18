@@ -27,6 +27,8 @@
 
 #define MIGRATE_SUBTREE // 是否开启子树迁移
 
+#define BG_THREAD_NUMS 1
+
 #define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
@@ -79,7 +81,7 @@ static inline void alloc_memalign(void **ret, size_t alignment, size_t size) {
 
 class Page;
 
-enum SubTreeStatus : uint8_t {
+enum SubTreeStatus : uint32_t {
   IN_NVM,
   IN_DRAM,
   NEED_MOVE_TO_NVM,
@@ -89,18 +91,20 @@ enum SubTreeStatus : uint8_t {
 
 class SubTree {
 private:
-  int height; // 4B
-  int is_indram; //标识整棵子树是否在dram中
+  int height_; // 4B
+  int numa_id; // 标记子树在哪个numa
+  SubTreeStatus subtree_status_; // 标识subtree的状态
   // char *root; // 整个B+树的根
-  char *sub_root; // 8B 正在使用的subtree的根
-  char *nvm_root; // 8B 当子树移到内存时，用此记录nvm的root
-  SubTree *left_sibling_subtree; //左子树
-  SubTree *right_sibling_subtree; //右子树
-  uint64_t read_times[numa_node_num]; // 各numa节点写操作次数
-  uint64_t write_times[numa_node_num]; // 各numa节点读操作次数
-  TreeLog *log; // 写日志
-  bool is_dirty; // 脏页写回NVM
-  uint64_t hotness; // 实际记录的是上一周期的热度
+  char *sub_root_; // 8B 正在使用的subtree的根
+  char *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
+  SubTree *left_sibling_subtree_; //左子树
+  SubTree *right_sibling_subtree_; //右子树
+  uint64_t read_times_[numa_node_num]; // 各numa节点写操作次数
+  uint64_t write_times_[numa_node_num]; // 各numa节点读操作次数
+  TreeLog *treelog_; // 写日志
+  bool is_dirty_; // 脏页写回NVM
+  uint64_t hotness_[numa_node_num]; // 实际记录的是上一周期的热度
+  uint64_t tmp_hotness; // 只使用缓存版本，暂时设个这个
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
@@ -108,7 +112,7 @@ private:
 #endif
 
 public:
-  SubTree();
+  SubTree(SubTreeStatus status = SubTreeStatus::IN_NVM);
   void setNewRoot(char *); // 设置sub_root
   void getNumberOfNodes();
   void btree_insert(entry_key_t, char *);
@@ -121,7 +125,7 @@ public:
   void printAll();
 
   // zzy add
-  SubTree(Page *root);
+  SubTree(Page *root, SubTreeStatus status = SubTreeStatus::IN_NVM);
   Page *btree_search_leaf(entry_key_t);
   void btree_search_range(entry_key_t, entry_key_t, std::vector<std::pair<uint64_t, uint64_t>> &result, int &size); 
   void btree_search_range(entry_key_t, entry_key_t, void **values, int &size); 
@@ -129,6 +133,10 @@ public:
   void CalculateSapce(uint64_t &space);
   Page *getRoot();
 
+  void cal_hotness();
+  uint64_t get_hotness() const;
+  void setSubTreeStatus(SubTreeStatus status);
+  SubTreeStatus getSubTreeStatus() const;
   void move_to_nvm(); // 缓存
   void move_to_dram(); // 淘汰
 
@@ -140,7 +148,7 @@ public:
 
 class IndexTree {
 private:
-  int height;
+  int height_;
   char *root; // 整个B+树的根
 
 public:
@@ -175,6 +183,8 @@ public:
     NNBTree() {
         has_indextree = false;
         tree_ = (char *)new SubTree();
+
+        statis_->insert_subtree((SubTree *)tree_);
 
         index_tree_root = this;
         std::cout << "index_tree_root: " << index_tree_root << std::endl;
@@ -257,13 +267,15 @@ public:
     char *tree_;
     bool has_indextree;
     std::mutex tree_lock;
+    std::vector<std::thread *> bg_thread; // 后台线程：用来统计和压缩
 };
 
 enum PageType : uint8_t {
   NVM_SUBTREE_PAGE,
   DRAM_CACHETREE_PAGE,
   DRAM_INDEXTREE_PAGE,
-  INDEXTREE_LAST_LEVEL_PAGE // 标识indextree最后一层page, 其内部存储的是subtree的指针
+  INDEXTREE_LAST_LEVEL_PAGE, // 标识indextree最后一层page, 其内部存储的是subtree的指针
+  UNKNOWN
 };
 
 class header {
@@ -274,7 +286,7 @@ private:
 #ifndef USE_SPINLOCK
   std::mutex *mtx;        // 8 bytes // 写独占
 #else
-  Spinlock *mtx;
+  Spinlock *mtx; // subtree实际不使用这个字段
 #endif
   uint32_t level;         // 4 bytes // 叶节点level为0, 向上累加
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
@@ -289,20 +301,20 @@ private:
   friend class IndexTree;
 
 public:
-  header() {
+  header() : leftmost_ptr(nullptr), right_sibling_ptr(nullptr), mtx(nullptr), 
+            level(0), switch_counter(0), is_deleted(false),
+            last_index(-1), page_type(PageType::UNKNOWN) {
     // mtx = new std::mutex();
     // mtx = new Spinlock();
     // std::cout << " cons " << mtx << std::endl << std::flush;
-
-    leftmost_ptr = NULL;
-    right_sibling_ptr = NULL;
-    switch_counter = 0;
-    level = 0;
-    last_index = -1;
-    is_deleted = false;
   }
 
-  ~header() { delete mtx; std::cout << " ~ " <<  mtx << std::endl << std::flush; mtx = NULL;}
+  ~header() { 
+    if(mtx) {
+      delete mtx; 
+      mtx = NULL;
+    } 
+  }
 };
 
 class entry {
@@ -937,7 +949,7 @@ public:
       // overflow
       // create a new node
       Page *sibling = nullptr;
-      if (likely(page_is_inpmem())) {
+      if (page_is_inpmem()) {
         sibling = new(true) Page(PageType::NVM_SUBTREE_PAGE, hdr.level);
       } else {
         sibling = new(false) Page((PageType)this->hdr.page_type, hdr.level);
@@ -962,12 +974,12 @@ public:
       }
 
       sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
-      if (likely(page_is_inpmem())) {
+      if (page_is_inpmem()) {
         clflush((char *)sibling, sizeof(Page));
       }
       
       hdr.right_sibling_ptr = sibling;
-      if (likely(page_is_inpmem())) {
+      if (page_is_inpmem()) {
         clflush((char *)&hdr, sizeof(hdr));
       }
 
@@ -978,12 +990,12 @@ public:
         ++hdr.switch_counter;
       records[m].ptr = NULL;
 
-      if (likely(page_is_inpmem())) {
+      if (page_is_inpmem()) {
         clflush((char *)&records[m], sizeof(entry));
       }
 
       hdr.last_index = (int8_t)(m - 1);
-      if (likely(page_is_inpmem())) {
+      if (page_is_inpmem()) {
         clflush((char *)&(hdr.last_index), sizeof(int8_t));
       }
       
@@ -1004,13 +1016,29 @@ public:
 
       if (hdr.page_type == PageType::NVM_SUBTREE_PAGE) {
         // Set a new root or insert the split key to the parent
-        if (bt->sub_root == (char *)this) { // only one node can update the root ptr
+        if (bt->sub_root_ == (char *)this) { // only one node can update the root ptr
           // zzy add
           // 如果子树高度超过MAX_SUBTREE_HEIGHT
             // 如果内存还没创建index_tree则创建
             // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
-            SubTree * sibling_subtree = new SubTree(sibling);
+            SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_NVM);
+            sibling_subtree->left_sibling_subtree_ = bt;
+            sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
+            bt->right_sibling_subtree_ = sibling_subtree;
+            sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
+            for (int i = 0; i < numa_node_num; i++) {
+              bt->hotness_[i] /= 2;
+              sibling_subtree->hotness_[i] = bt->hotness_[i];
+            }
+            
+            for (int nn = 0; nn < numa_node_num; nn++) {
+              bt->read_times_[nn] /= 2;
+              sibling_subtree->read_times_[nn] = bt->read_times_[nn];
+
+              bt->write_times_[nn] /= 2;
+              sibling_subtree->write_times_[nn] = bt->write_times_[nn];
+            }
 
             if (unlikely(!index_tree_root->has_hasindextree())) {
               index_tree_root->indextree_lock();
@@ -1036,6 +1064,7 @@ public:
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
+            statis_->insert_subtree(sibling_subtree);
           } else {
             Page *new_root = new(true) Page(PageType::NVM_SUBTREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);
@@ -1058,8 +1087,81 @@ public:
           // 调整父节点
           bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
         }
+        
       } else if (hdr.page_type == PageType::DRAM_CACHETREE_PAGE) {
-        p_assert(false, "not implement");
+        // Set a new root or insert the split key to the parent
+        if (bt->sub_root_ == (char *)this) { // only one node can update the root ptr
+          // zzy add
+          // 如果子树高度超过MAX_SUBTREE_HEIGHT
+            // 如果内存还没创建index_tree则创建
+            // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
+          if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
+            SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_DRAM);
+            sibling_subtree->treelog_ = new TreeLog();
+            sibling_subtree->left_sibling_subtree_ = bt;
+            sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
+            bt->right_sibling_subtree_ = sibling_subtree;
+            sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
+            for (int i = 0; i < numa_node_num; i++) {
+              bt->hotness_[i] /= 2;
+              sibling_subtree->hotness_[i] = bt->hotness_[i];
+            }
+            
+            for (int nn = 0; nn < numa_node_num; nn++) {
+              bt->read_times_[nn] /= 2;
+              sibling_subtree->read_times_[nn] = bt->read_times_[nn];
+
+              bt->write_times_[nn] /= 2;
+              sibling_subtree->write_times_[nn] = bt->write_times_[nn];
+            }
+
+            if (unlikely(!index_tree_root->has_hasindextree())) {
+              index_tree_root->indextree_lock();
+              if (index_tree_root->has_hasindextree()) {
+                index_tree_root->indextree_unlock();
+              }
+            }
+
+            if (!(index_tree_root->has_hasindextree())) {
+              Page *index_root_page = new(false) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
+              IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
+              index_tree_root->set_indextree(indextree_);
+              index_tree_root->indextree_unlock();
+              if (with_lock) {
+                hdr.mtx->unlock(); // Unlock the write lock
+              }
+              std::cout << "generate index tree: " << index_tree_root << std::endl << std::flush;
+            } else {
+              if (with_lock) {
+                hdr.mtx->unlock(); // Unlock the write lock
+              }
+              // 调整父节点
+              IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
+              indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
+            }
+            statis_->insert_subtree(sibling_subtree);
+          } else {
+            Page *new_root = new(false) Page(PageType::DRAM_CACHETREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
+            bt->setNewRoot((char *)new_root);
+
+            if (with_lock) {
+              hdr.mtx->unlock(); // Unlock the write lock
+            }
+          }
+          // Page *new_root =
+          //     new Page((Page *)this, split_key, sibling, hdr.level + 1);
+          // bt->setNewRoot((char *)new_root);
+
+          // if (with_lock) {
+          //   hdr.mtx->unlock(); // Unlock the write lock
+          // }
+        } else {
+          if (with_lock) {
+            hdr.mtx->unlock(); // Unlock the write lock
+          }
+          // 调整父节点
+          bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
+        }
       } else {
         p_assert(false, "should never be here");
       }

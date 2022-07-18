@@ -297,7 +297,6 @@ int main(int argc, char *argv[]) {
 
   // NVM::env_init();
   nnbtree::init_numa_pool();
-  nnbtree::init_treelogpool();
   
   KvDB *db = nullptr;
   if (dbName == "fastfair")
@@ -310,6 +309,7 @@ int main(int argc, char *argv[]) {
   }
 
   db->Init();
+  nnbtree::init_treelogpool();
   nnbtree::Timer timer;
   uint64_t us_times; 
   std::cout << "Start run ...." << std::endl;

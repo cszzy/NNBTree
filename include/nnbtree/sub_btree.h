@@ -11,6 +11,8 @@
 
 #include "nnbtree.h"
 
+#include <queue>
+
 namespace nnbtree {
 
 // static pthread_mutex_t print_mtx;
@@ -18,41 +20,61 @@ namespace nnbtree {
 /*
  * class SubTree
  */
-SubTree::SubTree() {
+SubTree::SubTree(SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibling_subtree_(NULL),
+                      is_dirty_(false), treelog_(NULL), tmp_hotness(0) {
   // root = (char *)new Page();
-  // height = 1;
-  sub_root = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0); // 第一个subtree在pmem中
-  clflush((char *)sub_root, sizeof(Page));
-  height = 1;
+  // height_ = 1;
+  sub_root_ = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0); // 第一个subtree在pmem中
+  clflush((char *)sub_root_, sizeof(Page));
+  height_ = 1;
+  
+  nvm_root_ = sub_root_;
+  subtree_status_ = status;
+  memset(read_times_, 0, sizeof(read_times_));
+  memset(write_times_, 0, sizeof(write_times_)); 
+  memset(hotness_, 0, sizeof(hotness_));
   // clflush((char *)this, sizeof(SubTree));
-  // printf("[nnbtree]: root is %p, SubTree is %p.\n", sub_root, this);
+  // printf("[nnbtree]: root is %p, SubTree is %p.\n", sub_root_, this);
 }
 
-SubTree::SubTree(Page *root_) {
+SubTree::SubTree(Page *root_, SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibling_subtree_(NULL),
+                      is_dirty_(false), treelog_(NULL), tmp_hotness(0) {
     if(root_ == nullptr) {
-      sub_root = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0);
-      clflush((char *)sub_root, sizeof(Page));
-      height = 1;
+      sub_root_ = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0);
+      clflush((char *)sub_root_, sizeof(Page));
+      height_ = 1;
+
+      nvm_root_ = sub_root_;
+      subtree_status_ = status;
+      memset(read_times_, 0, sizeof(read_times_));
+      memset(write_times_, 0, sizeof(write_times_));
+      memset(hotness_, 0, sizeof(hotness_));
       // clflush((char *)this, sizeof(SubTree));
     } else {
-      sub_root = (char *)root_;
-      height = root_->GetLevel() + 1;
+      sub_root_ = (char *)root_;
+      height_ = root_->GetLevel() + 1;
+
+      nvm_root_ = sub_root_;
+      subtree_status_ = status;
+      memset(read_times_, 0, sizeof(read_times_));
+      memset(write_times_, 0, sizeof(write_times_));
+      memset(hotness_, 0, sizeof(hotness_));
       // clflush((char *)this, sizeof(SubTree));
     }
-    // printf("[nnbtree]: root is %p, SubTree is %p, height is %d.\n", sub_root, this, height);
+    // printf("[nnbtree]: root is %p, SubTree is %p, height_ is %d.\n", sub_root_, this, height_);
 }
 
 void SubTree::setNewRoot(char *new_root) {
-  this->sub_root = (char *)new_root;
-  clflush((char *)&(this->sub_root), sizeof(char *));
-  ++height;
-  std::cout << "[subtree] setnewroot, height is " << height << std::endl;
+  this->sub_root_ = (char *)new_root;
+  clflush((char *)&(this->sub_root_), sizeof(char *));
+  ++height_;
+  std::cout << "[subtree] setnewroot, height_ is " << height_ << std::endl;
 }
 
 char *SubTree::btree_search(entry_key_t key) {
   // std::lock_guard<std::mutex> l(subtree_lock);
 
-  Page *p = (Page *)sub_root;
+  Page *p = (Page *)sub_root_;
 
   while (p->hdr.leftmost_ptr != NULL) {
     // Page *t = (Page *)p->linear_search(key);
@@ -90,8 +112,13 @@ char *SubTree::btree_search(entry_key_t key) {
 void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   // std::lock_guard<std::mutex> l(subtree_lock);
   subtree_lock.lock();
+#ifdef CACHE_SUBTREE
+  if (subtree_status_ == SubTreeStatus::IN_DRAM) {
+    treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
+  }
+#endif
 retry:
-  Page *p = (Page *)sub_root;
+  Page *p = (Page *)sub_root_;
 
   while (p->hdr.leftmost_ptr != NULL) {
     Page *t = (Page *)p->linear_search(key);
@@ -114,6 +141,27 @@ retry:
     goto retry;
   }
 
+  write_times_[numa_map[my_thread_id]]++;
+
+  // 检测是否需要缓存
+  if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+    // 分配日志
+    treelog_ = new TreeLog();
+    assert(treelog_);
+#ifdef CACHE_SUBTREE
+    // 移到内存
+    move_to_dram();
+#endif
+  } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
+#ifdef CACHE_SUBTREE
+    // 刷回nvm
+    move_to_nvm();
+#endif
+    // 释放日志，设置日志指针为null
+    delete treelog_;
+    treelog_ = nullptr;
+  }
+  
   subtree_lock.unlock();
 }
 
@@ -121,7 +169,7 @@ retry:
 // store the key into the node at the given level
 void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
                                   uint32_t level) {
-  Page *p = (Page *)sub_root;
+  Page *p = (Page *)sub_root_;
 
   if (level > (p->hdr.level))
     return;
@@ -138,7 +186,7 @@ void SubTree::btree_delete(entry_key_t key) {
   // std::lock_guard<std::mutex> l(subtree_lock);
   subtree_lock.lock();
   
-  Page *p = (Page *)sub_root;
+  Page *p = (Page *)sub_root_;
 
   while (p->hdr.leftmost_ptr != NULL) { // 遍历到叶
     Page *t = (Page *)p->linear_search(key);
@@ -169,7 +217,7 @@ void SubTree::btree_delete(entry_key_t key) {
 void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
                                   entry_key_t *deleted_key,
                                   bool *is_leftmost_node, Page **left_sibling) {
-  Page *p = (Page *)sub_root;
+  Page *p = (Page *)sub_root_;
 
   if (level > (p->hdr.level))
     return;
@@ -215,7 +263,7 @@ void SubTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level,
 // Function to search keys from "min" to "max"
 void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
                                unsigned long *buf) {
-  Page *p = (Page *)sub_root;
+  Page *p = (Page *)sub_root_;
 
   while (p) {
     if (p->hdr.leftmost_ptr != NULL) {
@@ -233,7 +281,7 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
 
 void SubTree::btree_search_range(entry_key_t min, entry_key_t max, 
     std::vector<std::pair<uint64_t, uint64_t>> &result, int &size) {
-    Page *p = (Page *)sub_root;
+    Page *p = (Page *)sub_root_;
 
     while(p) {
         if(p->hdr.leftmost_ptr != NULL) {
@@ -249,7 +297,7 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max,
 }
 
 void SubTree::btree_search_range(entry_key_t min, entry_key_t max, void **values, int &size) {
-    Page *p = (Page *)sub_root;
+    Page *p = (Page *)sub_root_;
 
     while(p) {
         if(p->hdr.leftmost_ptr != NULL) {
@@ -267,13 +315,13 @@ void SubTree::btree_search_range(entry_key_t min, entry_key_t max, void **values
 void SubTree::PrintInfo() {
     // printf("This is fast_fair b+ tree.\n");
     // printf("Node size is %lu, M path is %d.\n", sizeof(Page), cardinality);
-    std::cout << "Tree height is " << height << std::endl << std::flush;
+    std::cout << "Tree height_ is " << height_ << std::endl << std::flush;
 }
 
 void SubTree::printAll() {
   // pthread_mutex_lock(&print_mtx);
   int total_keys = 0;
-  Page *leftmost = (Page *)sub_root;
+  Page *leftmost = (Page *)sub_root_;
   printf("root: %p\n", leftmost);
   do {
     Page *sibling = leftmost;
@@ -293,7 +341,7 @@ void SubTree::printAll() {
 }
 
 Page *SubTree::getRoot() {
-  return (Page *)sub_root;
+  return (Page *)sub_root_;
 }
 
 void SubTree::lock_subtree() {
@@ -302,6 +350,190 @@ void SubTree::lock_subtree() {
 
 void SubTree::unlock_subtree() {
   subtree_lock.unlock();
+}
+
+void SubTree::move_to_nvm() {
+  // 层序遍历dram tree, 不检测脏页了，直接写回算了
+  Page *p = (Page *)sub_root_;
+  p_assert(p, "[move to dram]: root is null");
+  Page *cur_page = new(true) Page(*(Page *)sub_root_);
+  Page *new_root = cur_page;
+  cur_page->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
+
+  std::queue<std::pair<Page*, Page*>> page_queue;
+  page_queue.push({p, cur_page});
+  while (!page_queue.empty()) {
+    int page_nums = page_queue.size();
+    for (int i = 0; i < page_nums; i++) {
+      auto page_pair = page_queue.front();
+      page_queue.pop();
+      p = page_pair.first;
+      cur_page = page_pair.second;
+
+      // copy child page
+      Page *q = new(true) Page(*(p->hdr.leftmost_ptr));
+      q->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
+      cur_page->hdr.leftmost_ptr = q;
+      if (q->hdr.leftmost_ptr != nullptr) // 还有孩子
+        page_queue.push({p->hdr.leftmost_ptr, q});
+
+      for (int j = 0; j <= p->hdr.last_index; j++) {
+        Page *t = new(true) Page(*(Page*)p->records[j].ptr);
+        t->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
+        cur_page->records[j].ptr = (char *)t;
+        if (t->hdr.leftmost_ptr != nullptr) // 还有孩子
+          page_queue.push({(Page*)p->records[j].ptr, t});
+        q->hdr.right_sibling_ptr = t;
+        q = t;
+      }
+
+      delete p; // 或者交给后台线程回收？
+    }
+  }
+
+  // 修改子树根指针
+  sub_root_ = (char *)new_root;
+  
+  // 获得前继子树锁，修改前继子树page指针
+  if (left_sibling_subtree_ == nullptr)
+    return;
+retry:
+  left_sibling_subtree_->lock_subtree();
+  if (left_sibling_subtree_->right_sibling_subtree_ == this) {
+    Page *p = (Page *)left_sibling_subtree_->sub_root_;
+    Page *q = (Page *)this->sub_root_;
+    for (int i = 0; i < MAX_SUBTREE_HEIGHT; i++) {
+      p->hdr.right_sibling_ptr = q;
+      p = (Page *)(p->records[p->hdr.last_index].ptr);
+      q = q->hdr.leftmost_ptr;
+    }
+    assert(q == nullptr);
+    left_sibling_subtree_->unlock_subtree();
+    return;
+  } else {
+    SubTree *oldp = left_sibling_subtree_;
+    left_sibling_subtree_ = left_sibling_subtree_->right_sibling_subtree_;
+    oldp->unlock_subtree();
+    goto retry;
+  }
+
+  // 设置nvm子树为新子树，释放子树
+  Page *old_root = (Page *)nvm_root_;
+  nvm_root_ = sub_root_;
+  subtree_status_ = SubTreeStatus::IN_NVM;
+
+  // 回收NVM空间
+  std::queue<Page*> old_page_queue;
+  old_page_queue.push(old_root);
+  while (!old_page_queue.empty()) {
+    int page_nums = old_page_queue.size();
+    for (int i = 0; i < page_nums; i++) {
+      p = old_page_queue.front();
+      old_page_queue.pop();
+
+      // copy child page
+      if (p->hdr.leftmost_ptr->hdr.leftmost_ptr != nullptr) // 还有孩子
+        old_page_queue.push(p->hdr.leftmost_ptr);
+
+      for (int j = 0; j <= p->hdr.last_index; j++) {
+        Page *t = (Page*)p->records[j].ptr;
+        if (t->hdr.leftmost_ptr != nullptr) // 还有孩子
+          old_page_queue.push(t);
+      }
+
+      delete p; // 或者交给后台线程回收？
+    }
+  }
+}
+
+void SubTree::move_to_dram() {
+  // 层序遍历subtree，copy到内存
+  Page *p = (Page *)nvm_root_;
+  p_assert(p, "[move to dram]: root is null");
+  Page *dram_root = new(false) Page(*(Page *)nvm_root_); // 新生成的subtree的根page
+  dram_root->hdr.page_type = PageType::DRAM_CACHETREE_PAGE;
+  Page *cur_page = dram_root; // 当前操作的dram page
+  std::queue<std::pair<Page *, Page*>> page_queue;
+  page_queue.push({p, cur_page});
+  while (!page_queue.empty()) {
+    int page_nums = page_queue.size();
+    for (int i = 0; i < page_nums; i++) {
+      auto page_pair = page_queue.front();
+      page_queue.pop();
+      p = page_pair.first;
+      cur_page = page_pair.second;
+
+      // copy child page
+      Page *q = new(false) Page(*(p->hdr.leftmost_ptr));
+      q->hdr.page_type = PageType::DRAM_CACHETREE_PAGE;
+      cur_page->hdr.leftmost_ptr = q;
+      if (q->hdr.leftmost_ptr != nullptr) // 还有孩子
+        page_queue.push({p->hdr.leftmost_ptr, q});
+
+      for (int j = 0; j <= p->hdr.last_index; j++) {
+        Page *t = new(false) Page(*(Page*)p->records[j].ptr);
+        t->hdr.page_type = PageType::DRAM_CACHETREE_PAGE;
+        cur_page->records[j].ptr = (char *)t;
+        if (t->hdr.leftmost_ptr != nullptr) // 还有孩子
+          page_queue.push({(Page*)p->records[j].ptr, t});
+        q->hdr.right_sibling_ptr = t;
+        q = t;
+      }
+    }
+  }
+
+  // 设置子树根，设置子树状态
+  sub_root_ = (char*)dram_root;
+  subtree_status_ = SubTreeStatus::IN_DRAM;
+
+  // 获得前继subtree的锁（如果是第一颗子树则不需要获取了）
+  // 修改前继subtree的page的right_sibling_ptr指向内存page，然后释放锁
+  if (left_sibling_subtree_ == nullptr)
+    return;
+retry:
+  left_sibling_subtree_->lock_subtree();
+  if (left_sibling_subtree_->right_sibling_subtree_ == this) {
+    Page *p = (Page *)left_sibling_subtree_->sub_root_;
+    Page *q = (Page *)this->sub_root_;
+    for (int i = 0; i < MAX_SUBTREE_HEIGHT; i++) {
+      p->hdr.right_sibling_ptr = q;
+      p = (Page *)(p->records[p->hdr.last_index].ptr);
+      q = q->hdr.leftmost_ptr;
+    }
+    assert(q == nullptr);
+    left_sibling_subtree_->unlock_subtree();
+    return;
+  } else {
+    SubTree *oldp = left_sibling_subtree_;
+    left_sibling_subtree_ = left_sibling_subtree_->right_sibling_subtree_;
+    oldp->unlock_subtree();
+    goto retry;
+  }
+}
+
+void SubTree::cal_hotness() {
+  // 当前不考虑numa，直接返回所有numa热度和作为总热度
+  tmp_hotness = 0;
+  // 现在热度计算就是简单地把各节点的读和写加在一起, 因为还不考虑numa
+  for (int i = 0; i < numa_node_num; i++) {
+    int cur_hotness = read_times_[i] + write_times_[i];
+    read_times_[i] = write_times_[i] = 0;
+    hotness_[i] = (cur_hotness + hotness_[i]/5) / 2; // 瞎写的参数
+
+    tmp_hotness += hotness_[i];
+  }
+}
+
+uint64_t SubTree::get_hotness() const {
+  return tmp_hotness;
+}
+
+void SubTree::setSubTreeStatus(SubTreeStatus status) {
+  subtree_status_ = status;
+}
+
+SubTreeStatus SubTree::getSubTreeStatus() const {
+  return subtree_status_;
 }
 
 } // end namespace nnbtree

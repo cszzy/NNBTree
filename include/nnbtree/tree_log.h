@@ -5,6 +5,7 @@
 #include "numa_config.h"
 
 #include <assert.h>
+#include <atomic>
 
 namespace nnbtree {
 
@@ -38,7 +39,7 @@ class TreeLogPool {
 
         ~TreeLogPool() {
             for (int i = 0; i < numa_node_num; i++) {
-                index_pmem_free(log_start_addr_[i]);
+                pmem_unmap(log_start_addr_[i], mapped_len_);
             }
 
             free((void*)log_start_addr_);
@@ -73,7 +74,7 @@ class TreeLogPool {
     private:
         void **log_start_addr_;
         bitmap *bitmap_[numa_node_num];
-        uint64_t mapped_len_;
+        size_t mapped_len_;
 };
 
 extern TreeLogPool *treelog_pool;

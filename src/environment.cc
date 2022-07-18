@@ -17,7 +17,7 @@ namespace nnbtree {
         treelog_pool = new TreeLogPool();
         assert(treelog_pool);
         std::cout << "init treelog pool, pool nums:" << numa_node_num <<", log size: "
-                 << LogSize / 1024 << "kB" << "per numa log num: " << LogNum << std::endl;
+                 << LogSize / 1024 << "kB" << " per numa log nums: " << LogNum << std::endl;
     }
 
 

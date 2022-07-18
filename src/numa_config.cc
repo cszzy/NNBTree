@@ -1,11 +1,12 @@
 #include "numa_config.h"
+#include "nvm_alloc.h"
 #include <iostream>
 
 namespace nnbtree {
 
 pmem::obj::pool_base pop_numa[nnbtree::numa_max_node];
 int8_t numa_map[nnbtree::max_thread_num];
-thread_local int my_thread_id;
+thread_local int my_thread_id = -1;
 
 void bindCore(uint16_t core) {
     // printf("bind to %d\n", core);
@@ -39,12 +40,14 @@ void init_numa_pool() {
 
     for (int i = 0; i < nnbtree::numa_node_num; i++) {
         std::string pool_name = std::string("/mnt/AEP") 
-                                + std::to_string(i) + "/numa";
-        std::cout << "numa " << i << " pool: " << pool_name << std::endl;
+                                + std::to_string(i) + "/data";
+        
         remove(pool_name.c_str());
         pop_numa[i] = pmem::obj::pool<int>::create(
-            pool_name, "WQ", PMEMOBJ_MIN_POOL * 20 * 1024, S_IWUSR | S_IRUSR
+            pool_name, "WQ", PMEMOBJ_MIN_POOL * 24 * 1024, S_IWUSR | S_IRUSR
         );
+        std::cout << "numa " << i << " pool: " << pool_name << " size: " << 
+                PMEMOBJ_MIN_POOL * 24 * 1024 / 1024 / 1024 / 1024 << " GB" << std::endl;
     }
 }
 
@@ -66,20 +69,14 @@ void index_pmem_free(void *ptr)
 }
 
 void ** index_pemm_alloc_log(size_t size) {
-    void **logptr_vec = (void**)malloc(sizeof(void*) * numa_node_num);
+    void **logptr_vec = (void **)malloc(sizeof(void*) * numa_node_num);
     for (int i = 0; i < numa_node_num; i++) {
-        PMEMoid oid;
-        if (pmemobj_alloc(pop_numa[numa_map[i]].handle(), 
-                &oid, size, 0, nullptr, nullptr)) {
-            fprintf(stderr, "fail to alloc nvm\n");
-            for (int j = 0; j < i; j++) {
-                auto f_oid = pmemobj_oid(logptr_vec[j]);
-                pmemobj_free(&f_oid);
-            }
-            exit(-1);
-        }
-
-        logptr_vec[i] = ((void *)pmemobj_direct(oid));
+        std::string logpool_name = std::string("/mnt/AEP") 
+                                + std::to_string(i) + "/logpool";
+        size_t mapped_len = 0;
+        void *p = NVM::PmemMapFile(logpool_name.c_str(), size, &mapped_len);
+        assert(mapped_len == size);
+        logptr_vec[i] = p;
     }
     return logptr_vec;
 }

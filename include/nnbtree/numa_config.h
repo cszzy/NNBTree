@@ -40,7 +40,4 @@ void index_pmem_free(void *ptr);
 // 在每个numa节点上都
 void ** index_pemm_alloc_log(size_t size);
 
-
-
-
 } // end namespace nnbtree

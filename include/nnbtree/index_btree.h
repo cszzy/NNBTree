@@ -14,15 +14,15 @@ namespace nnbtree {
 
 IndexTree::IndexTree(Page *page_, uint32_t level_) {
   root = (char *)page_;
-  height = level_ + 1;
-  std::cout << "[nnbtree]: indextree root is " << (void*)root << " , indextree is " << this << " , height is " << height << std::endl;
+  height_ = level_ + 1;
+  std::cout << "[nnbtree]: indextree root is " << (void*)root << " , indextree is " << this << " , height_ is " << height_ << std::endl;
 }
 
 
 void IndexTree::setNewRoot(char *new_root) {
   this->root = new_root;
-  ++height;
-  std::cout << "[indextree] setnewroot, height is " << height << std::endl;
+  ++height_;
+  std::cout << "[indextree] setnewroot, height_ is " << height_ << std::endl;
 }
 
 char *IndexTree::btree_search(entry_key_t key) {
@@ -182,7 +182,7 @@ Page * IndexTree::getRoot() {
 void IndexTree::PrintInfo() {
     // printf("This is fast_fair b+ tree.\n");
     // printf("Node size is %lu, M path is %d.\n", sizeof(Page), cardinality);
-    printf("Tree height is %d.\n", height);
+    printf("Tree height_ is %d.\n", height_);
 }
 
 void IndexTree::printAll() {
