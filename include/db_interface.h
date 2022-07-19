@@ -123,6 +123,7 @@ void Init()
 #ifdef TEST_PMEM_SIZE
     NVM::pmem_size = 0;
 #endif
+    init_treelogpool();
 }
 
 void Info()

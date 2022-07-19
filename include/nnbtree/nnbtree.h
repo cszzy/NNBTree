@@ -14,9 +14,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <vector>
+#include <unordered_set>
 
 #include "nvm_alloc.h"
-#include "statistics.h"
 #include "common.h"
 #include "numa_config.h"
 #include "tree_log.h"
@@ -32,6 +32,8 @@
 #define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
+
+#define TOPK_SUBTREE_NUM 10000
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -85,15 +87,16 @@ enum SubTreeStatus : uint32_t {
   IN_NVM,
   IN_DRAM,
   NEED_MOVE_TO_NVM,
-  NEED_MOVE_TO_DRAM,
+  NEED_MOVE_TO_DRAM, // 迁移到
   IS_DELETED, // 防止迁移已经完全删除的子树
+  NEED_MOVE_TO_REMOTE // 迁移到远程
 };
 
 class SubTree {
 private:
-  int height_; // 4B
-  int numa_id; // 标记子树在哪个numa
-  SubTreeStatus subtree_status_; // 标识subtree的状态
+  int32_t height_; // 4B
+  // int32_t numa_id; // 标记子树在哪个numa?但是子树下的page仍然处于不同的numa节点=_=
+  SubTreeStatus subtree_status_; // 标识subtree状态
   // char *root; // 整个B+树的根
   char *sub_root_; // 8B 正在使用的subtree的根
   char *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
@@ -102,9 +105,10 @@ private:
   uint64_t read_times_[numa_node_num]; // 各numa节点写操作次数
   uint64_t write_times_[numa_node_num]; // 各numa节点读操作次数
   TreeLog *treelog_; // 写日志
-  bool is_dirty_; // 脏页写回NVM
-  uint64_t hotness_[numa_node_num]; // 实际记录的是上一周期的热度
-  uint64_t tmp_hotness; // 只使用缓存版本，暂时设个这个
+  uint64_t hotness_[numa_node_num]; // 记录的是上一周期的热度
+  uint64_t tmp_hotness; // 只使用缓存版本，记录当前热度
+  
+  // bool is_dirty_; // 脏页写回NVM
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
@@ -137,8 +141,8 @@ public:
   uint64_t get_hotness() const;
   void setSubTreeStatus(SubTreeStatus status);
   SubTreeStatus getSubTreeStatus() const;
-  void move_to_nvm(); // 缓存
-  void move_to_dram(); // 淘汰
+  void move_to_nvm(); // 淘汰
+  void move_to_dram(); // 缓存
 
   void lock_subtree();
   void unlock_subtree();
@@ -178,16 +182,175 @@ public:
 class NNBTree;
 NNBTree *index_tree_root;
 
+class Statistics {
+    public:
+        Statistics() {}
+
+        ~Statistics() {}
+
+        void insert_subtree(SubTree * subtree) {
+            all_subtree_lock.lock();
+            all_subtree.push_back(subtree);
+            all_subtree_lock.unlock();
+        }
+
+        // 选择前k个热点子树，目前只考虑缓存
+        void select_topk(int k) {  
+            // 把子树复制过来 O(N/k)
+            all_subtree_lock.lock();
+            staticstic_subtree.insert(staticstic_subtree.end(), 
+                    all_subtree.begin() + staticstic_subtree.size(), all_subtree.end());
+            all_subtree_lock.unlock();
+
+            if (unlikely(staticstic_subtree.size() < k)) { // 子树总数小于缓存数
+                return;
+            }
+
+            // 计算所有子树热度 O(N)
+            // 这一步现在放到topk中进行计算，减少一次扫描
+            // for (auto subtree : staticstic_subtree) {
+            //     subtree->cal_hotness();
+            // }
+
+            // O(N)得到topk，同时将热点nvm子树设置为待缓存，将非热点nvm子树设置为待淘汰
+            topk(staticstic_subtree, k);
+        }
+
+    private:
+        void topk(std::vector<SubTree *> &arr, int k) {
+            if (unlikely(arr.size() < k)) {
+                // subtree总数小于k，不进行缓存
+                return;
+            }
+
+            srand((unsigned)time(NULL));
+            int left = 0;
+            int right = arr.size() - 1;
+            int target = arr.size() - k;
+            while (true) {
+                int pivotIndex = partition(arr, left, right);
+                if (pivotIndex == target) {
+                    // 设置前k个nvm子树的状态为NEED_MOVE_TO_DRAM
+                    for (int i = arr.size() - 1; i >= target; i--) {
+                        topk_subtree.erase(arr[i]);
+                        if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
+                            arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_DRAM);
+                        } else if (arr[i]->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+                            arr[i]->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+                            std::cout << "dram subtree hasn't been move to nvm" << std::endl;
+                        }
+                    }
+
+                    for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
+                        if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM || 
+                            (*iter)->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+                                (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+                            }
+                    }
+
+                    // 重置topk
+                    topk_subtree.clear();
+                    for (int i = arr.size() - 1; i >= target; i--) {
+                        topk_subtree.insert(arr[i]);
+                    }
+
+                    return; 
+                } else if (pivotIndex < target) {
+                    left = pivotIndex + 1; 
+                } else {
+                    // pivotIndex > target
+                    right = pivotIndex - 1; 
+                }
+            }
+        }
+
+        int partition(std::vector<SubTree *> &arr, int low, int high) {
+            bool need_cal_hotness = false;
+            if (low == 0 && high == arr.size() - 1) {
+                // 第一次partition，需要计算热度
+                need_cal_hotness = true;
+            }
+            int pos = low + random() % (high - low + 1);
+            // int pos = (low + high) >> 1;
+            if (need_cal_hotness) {
+                arr[pos]->cal_hotness();
+            }
+            uint64_t pivot = arr[pos]->get_hotness();
+            std::swap(arr[low], arr[pos]);
+            int left = low + 1;
+            int right = high;
+            if (need_cal_hotness) {
+                arr[left]->cal_hotness();
+                arr[right]->cal_hotness();
+            }
+
+            while (true) {
+                while (left <= right && arr[left]->get_hotness() <= pivot) {
+                    left++;
+                    if (need_cal_hotness) {
+                        arr[left]->cal_hotness();
+                    }
+                }
+
+                while (left <= right && arr[right]->get_hotness() >= pivot) {
+                    right--;
+                    if (need_cal_hotness) {
+                        arr[right]->cal_hotness();
+                    }
+                }
+
+                if (left < right) {
+                    std::swap(arr[left], arr[right]);
+                    left++;
+                    right--;
+                } else {
+                    break;
+                }
+            }
+
+            std::swap(arr[low], arr[right]);
+
+            return right;
+        }
+
+        std::vector<SubTree *> all_subtree; // 记录所有subtree指针
+        std::mutex all_subtree_lock; // all_subtree锁，保护前台线程写和后线程读
+        std::vector<SubTree *> staticstic_subtree; // 使用topk进行统计
+        std::unordered_set<SubTree *> topk_subtree; // 记录topk子树
+};
+
+Statistics *statis_;
+
+std::vector<std::thread> bg_thread; // 后台线程：用来统计和压缩
+
+void bgthread_func(int bg_thread_id) {
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    while (true) {
+        statis_->select_topk(TOPK_SUBTREE_NUM);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+void start_bgthread() {
+    int bg_thread_num = 1;
+    for (int i = 0; i < bg_thread_num; i++) {
+        bg_thread.emplace_back(std::thread(bgthread_func, i));
+    }
+}
+
 class NNBTree {
 public:
     NNBTree() {
-        has_indextree = false;
-        tree_ = (char *)new SubTree();
+      has_indextree = false;
+      tree_ = (char *)new SubTree();
 
-        statis_->insert_subtree((SubTree *)tree_);
+      statis_ = new Statistics();
+      statis_->insert_subtree((SubTree *)tree_);
 
-        index_tree_root = this;
-        std::cout << "index_tree_root: " << index_tree_root << std::endl;
+      index_tree_root = this;
+      std::cout << "index_tree_root: " << index_tree_root << std::endl;
+    
+      start_bgthread();
     }
 
     ~NNBTree() {
@@ -267,7 +430,6 @@ public:
     char *tree_;
     bool has_indextree;
     std::mutex tree_lock;
-    std::vector<std::thread *> bg_thread; // 后台线程：用来统计和压缩
 };
 
 enum PageType : uint8_t {
@@ -1026,7 +1188,8 @@ public:
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
             bt->right_sibling_subtree_ = sibling_subtree;
-            sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
+            if (sibling_subtree->right_sibling_subtree_)
+              sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
             for (int i = 0; i < numa_node_num; i++) {
               bt->hotness_[i] /= 2;
               sibling_subtree->hotness_[i] = bt->hotness_[i];
@@ -1101,7 +1264,8 @@ public:
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
             bt->right_sibling_subtree_ = sibling_subtree;
-            sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
+            if (sibling_subtree->right_sibling_subtree_)
+              sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
             for (int i = 0; i < numa_node_num; i++) {
               bt->hotness_[i] /= 2;
               sibling_subtree->hotness_[i] = bt->hotness_[i];

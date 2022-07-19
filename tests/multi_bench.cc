@@ -81,7 +81,7 @@ void show_help(char* prog) {
     "    --help[-h]               show help" << std::endl;
 }
 
-int thread_num = 2;
+int thread_num = 1;
 size_t LOAD_SIZE   = 10000000;
 size_t PUT_SIZE    = 6000000;
 size_t GET_SIZE    = 1000000;
@@ -258,6 +258,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Workload:              " << load_file << std::endl;
 
   std::vector<uint64_t> data_base;
+  Loads_type = 1;
   switch (Loads_type)
   {
   case -2:
@@ -309,7 +310,7 @@ int main(int argc, char *argv[]) {
   }
 
   db->Init();
-  nnbtree::init_treelogpool();
+
   nnbtree::Timer timer;
   uint64_t us_times; 
   std::cout << "Start run ...." << std::endl;

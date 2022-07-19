@@ -60,7 +60,7 @@ class TreeLogPool {
             char *log_addr = (char*)(log_start_addr_[numa_map[my_thread_id]]) + pos * LogSize;
 
             *((uint32_t *)log_addr) = 0;
-            p_assert((uint32_t *)log_addr == 0, "init log metadata fail"); 
+            p_assert(*(uint32_t *)log_addr == 0, "init log metadata fail"); 
 
             return log_addr;
         }

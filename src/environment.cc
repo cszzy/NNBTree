@@ -4,6 +4,7 @@
 #include "tree_log.h"
 #include "numa_config.h"
 
+
 namespace Common {
     std::map<std::string, Common::Statistic> timers;
     class Metcic g_metic;
@@ -19,8 +20,6 @@ namespace nnbtree {
         std::cout << "init treelog pool, pool nums:" << numa_node_num <<", log size: "
                  << LogSize / 1024 << "kB" << " per numa log nums: " << LogNum << std::endl;
     }
-
-
 }
 
 namespace NVM
