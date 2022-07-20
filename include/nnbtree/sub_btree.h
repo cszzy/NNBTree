@@ -102,7 +102,7 @@ char *SubTree::btree_search(entry_key_t key) {
   read_times_[numa_map[my_thread_id]]++;
 
   if (!t) {
-    printf("NOT FOUND %lu, t = %p\n", key, t);
+    printf("NOT FOUND %lu\n", key);
     return NULL;
   }
 
@@ -139,30 +139,34 @@ retry:
   }
 
   if (!p->store(this, NULL, key, right, true, false)) { // store
+    p_assert(false, "should not happen");
     if (index_tree_root->has_hasindextree()) {
       subtree_lock.unlock();
       return index_tree_root->btree_insert(key, right);
     }
     // subtree_lock.unlock();
     // btree_insert(key, right);
-    p_assert(false, "should not happen");
+    
     goto retry;
   }
 
   write_times_[numa_map[my_thread_id]]++;
 
+#ifdef CACHE_SUBTREE
   // 检测是否需要缓存
   if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
     // 分配日志
     treelog_ = new TreeLog();
     assert(treelog_);
-#ifdef CACHE_SUBTREE
+
     // 移到内存
     move_to_dram();
-#endif
   }
-  
+#endif
+
   subtree_lock.unlock();
+
+  btree_search(key);
 }
 
 // XXX: 需要判断store应该落在indextree还是subtree
@@ -430,7 +434,6 @@ retry:
       p = old_page_queue.front();
       old_page_queue.pop();
 
-      // copy child page
       bool has_child = p->hdr.level != 0;
       if (has_child) // 还有孩子
         old_page_queue.push(p->hdr.leftmost_ptr);
@@ -470,6 +473,7 @@ retry:
 
 void SubTree::move_to_dram() {
   // 层序遍历subtree，copy到内存
+  nvm_root_ = sub_root_;
   Page *p = (Page *)nvm_root_;
   p_assert(p, "[move to dram]: root is null");
   Page *dram_root = new(false) Page(*(Page *)nvm_root_); // 新生成的subtree的根page

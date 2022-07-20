@@ -33,7 +33,7 @@
 
 #define CACHE_LINE_SIZE 64
 
-#define TOPK_SUBTREE_NUM 10000
+#define TOPK_SUBTREE_NUM 1000
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -214,6 +214,7 @@ class Statistics {
 
             // O(N)得到topk，同时将热点nvm子树设置为待缓存，将非热点nvm子树设置为待淘汰
             topk(staticstic_subtree, k);
+            std::cout << "select topk" << std::endl;
         }
 
     private:
@@ -235,15 +236,15 @@ class Statistics {
                         topk_subtree.erase(arr[i]);
                         if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
                             arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_DRAM);
-                        } else if (arr[i]->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
-                            arr[i]->setSubTreeStatus(SubTreeStatus::IN_DRAM);
-                            std::cout << "dram subtree hasn't been move to nvm" << std::endl;
                         }
+                        //  else if (arr[i]->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+                        //     arr[i]->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+                        //     // std::cout << "dram subtree hasn't been move to nvm" << std::endl;
+                        // }
                     }
 
                     for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
-                        if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM || 
-                            (*iter)->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+                        if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
                                 (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
                             }
                     }
@@ -287,14 +288,14 @@ class Statistics {
             while (true) {
                 while (left <= right && arr[left]->get_hotness() <= pivot) {
                     left++;
-                    if (need_cal_hotness) {
+                    if (left <= right && need_cal_hotness) {
                         arr[left]->cal_hotness();
                     }
                 }
 
                 while (left <= right && arr[right]->get_hotness() >= pivot) {
                     right--;
-                    if (need_cal_hotness) {
+                    if (left <= right && need_cal_hotness) {
                         arr[right]->cal_hotness();
                     }
                 }
@@ -326,8 +327,8 @@ std::vector<std::thread> bg_thread; // 后台线程：用来统计和压缩
 void bgthread_func(int bg_thread_id) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
     while (true) {
-        statis_->select_topk(TOPK_SUBTREE_NUM);
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        // statis_->select_topk(TOPK_SUBTREE_NUM);
+        std::this_thread::sleep_for(std::chrono::seconds(15));
     }
 }
 

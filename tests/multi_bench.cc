@@ -258,7 +258,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Workload:              " << load_file << std::endl;
 
   std::vector<uint64_t> data_base;
-  Loads_type = 1;
+  Loads_type = 4;
   switch (Loads_type)
   {
   case -2:
@@ -370,43 +370,43 @@ int main(int argc, char *argv[]) {
               << "iops " << (double)(LOAD_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
 
-  {
-     // Put
-    clear_cache();
-    std::vector<std::thread> threads;
-    std::atomic_int thread_id_count(0);
-    size_t per_thread_size = PUT_SIZE / thread_num;
-    timer.Clear();
-    timer.Record("start");
-    for(int i = 0; i < thread_num; i ++) {
-        threads.emplace_back([&](){
-            int thread_id = thread_id_count.fetch_add(1);
-            nnbtree::my_thread_id = thread_id;
-#ifdef NUMA_TEST
-            nnbtree::bindCore(nnbtree::my_thread_id);
-#endif
-            size_t start_pos = thread_id * per_thread_size + LOAD_SIZE;
-            size_t size = (thread_id == thread_num-1) ? PUT_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
-            for (size_t j = 0; j < size; ++j) {
-                auto ret = db->Put(data_base[start_pos+j], data_base[start_pos+j]);
-                if (ret != 1) {
-                    std::cout << "Put error, key: " << data_base[start_pos+j] << ", size: " << j << std::endl;
-                    assert(0);
-                }
-                if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 
-            }
-        });
-    }
-    for (auto& t : threads) {
-      t.join();
-    }
+//   {
+//      // Put
+//     clear_cache();
+//     std::vector<std::thread> threads;
+//     std::atomic_int thread_id_count(0);
+//     size_t per_thread_size = PUT_SIZE / thread_num;
+//     timer.Clear();
+//     timer.Record("start");
+//     for(int i = 0; i < thread_num; i ++) {
+//         threads.emplace_back([&](){
+//             int thread_id = thread_id_count.fetch_add(1);
+//             nnbtree::my_thread_id = thread_id;
+// #ifdef NUMA_TEST
+//             nnbtree::bindCore(nnbtree::my_thread_id);
+// #endif
+//             size_t start_pos = thread_id * per_thread_size + LOAD_SIZE;
+//             size_t size = (thread_id == thread_num-1) ? PUT_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
+//             for (size_t j = 0; j < size; ++j) {
+//                 auto ret = db->Put(data_base[start_pos+j], data_base[start_pos+j]);
+//                 if (ret != 1) {
+//                     std::cout << "Put error, key: " << data_base[start_pos+j] << ", size: " << j << std::endl;
+//                     assert(0);
+//                 }
+//                 if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 
+//             }
+//         });
+//     }
+//     for (auto& t : threads) {
+//       t.join();
+//     }
         
-    timer.Record("stop");
-    us_times = timer.Microsecond("stop", "start");
-    std::cout << "[Metic-Put]: Put " << PUT_SIZE << ": " 
-              << "cost " << us_times/1000000.0 << "s, " 
-              << "iops " << (double)(PUT_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
-  }
+//     timer.Record("stop");
+//     us_times = timer.Microsecond("stop", "start");
+//     std::cout << "[Metic-Put]: Put " << PUT_SIZE << ": " 
+//               << "cost " << us_times/1000000.0 << "s, " 
+//               << "iops " << (double)(PUT_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
+//   }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
 
