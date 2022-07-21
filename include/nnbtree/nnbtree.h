@@ -107,8 +107,7 @@ private:
   TreeLog *treelog_; // 写日志
   uint64_t hotness_[numa_node_num]; // 记录的是上一周期的热度
   uint64_t tmp_hotness; // 只使用缓存版本，记录当前热度
-  
-  // bool is_dirty_; // 脏页写回NVM
+  bool is_dirty_; // 脏页写回NVM
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
@@ -314,7 +313,7 @@ void bgthread_func(int bg_thread_id) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
     while (true) {
         statis_->select_topk(TOPK_SUBTREE_NUM);
-        std::this_thread::sleep_for(std::chrono::seconds(30));
+        std::this_thread::sleep_for(std::chrono::seconds(15));
     }
 }
 
@@ -1172,6 +1171,7 @@ public:
             // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_NVM);
+            sibling_subtree->lock_subtree();
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
             bt->right_sibling_subtree_ = sibling_subtree;
@@ -1215,6 +1215,7 @@ public:
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
             statis_->insert_subtree(sibling_subtree);
+            sibling_subtree->unlock_subtree();
           } else {
             Page *new_root = new(true) Page(PageType::NVM_SUBTREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);
@@ -1247,6 +1248,7 @@ public:
             // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_DRAM);
+            sibling_subtree->lock_subtree();
             sibling_subtree->treelog_ = new TreeLog();
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
@@ -1291,6 +1293,7 @@ public:
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
             statis_->insert_subtree(sibling_subtree);
+            sibling_subtree->unlock_subtree();
           } else {
             Page *new_root = new(false) Page(PageType::DRAM_CACHETREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);

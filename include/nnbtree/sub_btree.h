@@ -10,6 +10,7 @@
     // 注意: fast_fair虽然实现了删除时的节点合并，但是为了性能实际并没有合并
 
 #include "nnbtree.h"
+#include "common.h"
 
 #include <queue>
 
@@ -21,7 +22,7 @@ namespace nnbtree {
  * class SubTree
  */
 SubTree::SubTree(SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibling_subtree_(NULL),
-                       treelog_(NULL), tmp_hotness(0) {
+                      is_dirty_(false), treelog_(NULL), tmp_hotness(0) {
   // root = (char *)new Page();
   // height_ = 1;
   sub_root_ = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0); // 第一个subtree在pmem中
@@ -38,7 +39,7 @@ SubTree::SubTree(SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibl
 }
 
 SubTree::SubTree(Page *root_, SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibling_subtree_(NULL),
-                       treelog_(NULL), tmp_hotness(0) {
+                      is_dirty_(false), treelog_(NULL), tmp_hotness(0) {
     if(root_ == nullptr) {
       sub_root_ = (char *)new(true) Page(PageType::NVM_SUBTREE_PAGE, 0);
       clflush((char *)sub_root_, sizeof(Page));
@@ -56,6 +57,10 @@ SubTree::SubTree(Page *root_, SubTreeStatus status) : left_sibling_subtree_(NULL
 
       nvm_root_ = sub_root_;
       subtree_status_ = status;
+      if (root_->hdr.page_type == PageType::DRAM_CACHETREE_PAGE) {
+        is_dirty_ = true;
+        nvm_root_ = nullptr;
+      }
       memset(read_times_, 0, sizeof(read_times_));
       memset(write_times_, 0, sizeof(write_times_));
       memset(hotness_, 0, sizeof(hotness_));
@@ -112,6 +117,7 @@ char *SubTree::btree_search(entry_key_t key) {
 
 // insert the key in the leaf node
 void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
+  
   // std::lock_guard<std::mutex> l(subtree_lock);
   subtree_lock.lock();
 #ifdef CACHE_SUBTREE
@@ -150,6 +156,8 @@ retry:
     goto retry;
   }
 
+  if (subtree_status_ == SubTreeStatus::IN_DRAM)
+    is_dirty_ = true;
   write_times_[numa_map[my_thread_id]]++;
 
 #ifdef CACHE_SUBTREE
@@ -358,124 +366,136 @@ void SubTree::unlock_subtree() {
 }
 
 void SubTree::move_to_nvm() {
-  // 层序遍历dram tree, 不检测脏页了，直接写回算了
+  // 层序遍历dram tree, 如果是脏树则写回nvm
   Page *dram_root = (Page *)sub_root_;
-  const Page *p = dram_root;
-  p_assert(p, "[move to nvm]: root is null");
-  Page *cur_page = new(true) Page(*dram_root);
-  Page *new_root = cur_page;
-  cur_page->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
+  if (is_dirty_) {
+    const Page *p = dram_root;
+    p_assert(p, "[move to nvm]: root is null");
+    Page *cur_page = new(true) Page(*dram_root);
+    Page *new_root = cur_page;
+    cur_page->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
 
-  std::queue<std::pair<const Page*, Page*>> page_queue;
-  page_queue.push({p, cur_page});
-  while (!page_queue.empty()) {
-    int page_nums = page_queue.size();
-    for (int i = 0; i < page_nums; i++) {
-      auto page_pair = page_queue.front();
-      page_queue.pop();
-      p = page_pair.first;
-      cur_page = page_pair.second;
+    std::queue<std::pair<const Page*, Page*>> page_queue;
+    page_queue.push({p, cur_page});
+    while (!page_queue.empty()) {
+      int page_nums = page_queue.size();
+      for (int i = 0; i < page_nums; i++) {
+        auto page_pair = page_queue.front();
+        page_queue.pop();
+        p = page_pair.first;
+        cur_page = page_pair.second;
 
-      // copy child page
-      Page *q = new(true) Page(*(p->hdr.leftmost_ptr));
-      q->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
-      cur_page->hdr.leftmost_ptr = q;
-      if (q->hdr.level != 0) // 非叶子节点
-        page_queue.push({p->hdr.leftmost_ptr, q});
+        // copy child page
+        Page *q = new(true) Page(*(p->hdr.leftmost_ptr));
+        q->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
+        cur_page->hdr.leftmost_ptr = q;
+        if (q->hdr.level != 0) // 非叶子节点
+          page_queue.push({p->hdr.leftmost_ptr, q});
 
-      for (int j = 0; j <= p->hdr.last_index; j++) {
-        Page *t = new(true) Page(*(Page*)p->records[j].ptr);
-        t->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
-        cur_page->records[j].ptr = (char *)t;
-        if (t->hdr.level != 0) // 非叶子节点
-          page_queue.push({(Page*)p->records[j].ptr, t});
-        q->hdr.right_sibling_ptr = t;
-        q = t;
+        for (int j = 0; j <= p->hdr.last_index; j++) {
+          Page *t = new(true) Page(*(Page*)p->records[j].ptr);
+          t->hdr.page_type = PageType::NVM_SUBTREE_PAGE;
+          cur_page->records[j].ptr = (char *)t;
+          if (t->hdr.level != 0) // 非叶子节点
+            page_queue.push({(Page*)p->records[j].ptr, t});
+          q->hdr.right_sibling_ptr = t;
+          q = t;
+        }
       }
     }
-  }
 
-  // 修改子树根指针
-  sub_root_ = (char *)new_root;
+    // 修改子树根指针
+    sub_root_ = (char *)new_root;
+  } else {
+    sub_root_ = nvm_root_;
+  }
   
   // 获得前继子树锁，修改前继子树page指针
-  if (left_sibling_subtree_ == nullptr)
-    return;
+  if (left_sibling_subtree_ != nullptr) {
 retry:
-  left_sibling_subtree_->lock_subtree();
-  if (left_sibling_subtree_->right_sibling_subtree_ == this) { // 前继子树没有处于分裂的中间状态
-    Page *p = (Page *)left_sibling_subtree_->sub_root_;
-    Page *q = (Page *)this->sub_root_;
-    for (int i = 0; i < MAX_SUBTREE_HEIGHT; i++) {
-      p->hdr.right_sibling_ptr = q;
-      p = (Page *)(p->records[p->hdr.last_index].ptr);
-      q = q->hdr.leftmost_ptr;
+    left_sibling_subtree_->lock_subtree();
+    if (left_sibling_subtree_->right_sibling_subtree_ == this) { // 前继子树没有处于分裂的中间状态
+      Page *p = (Page *)left_sibling_subtree_->sub_root_;
+      Page *q = (Page *)this->sub_root_;
+      for (int i = 0; i < MAX_SUBTREE_HEIGHT; i++) {
+        p->hdr.right_sibling_ptr = q;
+        p = (Page *)(p->records[p->hdr.last_index].ptr);
+        q = q->hdr.leftmost_ptr;
+      }
+      assert(q == nullptr);
+      left_sibling_subtree_->unlock_subtree();
+    } else {
+      SubTree *oldp = left_sibling_subtree_;
+      left_sibling_subtree_ = left_sibling_subtree_->right_sibling_subtree_;
+      oldp->unlock_subtree();
+      goto retry;
     }
-    assert(q == nullptr);
-    left_sibling_subtree_->unlock_subtree();
-    return;
-  } else {
-    SubTree *oldp = left_sibling_subtree_;
-    left_sibling_subtree_ = left_sibling_subtree_->right_sibling_subtree_;
-    oldp->unlock_subtree();
-    goto retry;
   }
 
-  // 设置nvm子树为新子树，释放旧子树
-  Page *old_root = (Page *)nvm_root_;
+  // if (is_dirty_ && nvm_root_) {
+  //   // 设置nvm子树为新子树，释放旧子树
+  //   Page *old_root = (Page *)nvm_root_;
+    
+
+  //   // 回收NVM空间
+  //   std::queue<Page*> old_page_queue;
+  //   old_page_queue.push(old_root);
+  //   while (!old_page_queue.empty()) {
+  //     int page_nums = old_page_queue.size();
+  //     for (int i = 0; i < page_nums; i++) {
+  //       Page *p = old_page_queue.front();
+  //       old_page_queue.pop();
+
+  //       bool has_child = p->hdr.level != 0;
+  //       if (has_child) // 还有孩子
+  //         old_page_queue.push(p->hdr.leftmost_ptr);
+
+  //       for (int j = 0; j <= p->hdr.last_index; j++) {
+  //         if (has_child) // 还有孩子
+  //           old_page_queue.push((Page*)p->records[j].ptr);
+  //       }
+
+  //       // 注意nvm page不能调用delete删除，会报free invalid pointer错误，因为它并不在内存
+  //       // delete p; // 或者交给后台线程回收？
+  //       assert(p->hdr.page_type == PageType::NVM_SUBTREE_PAGE);
+  //       index_pmem_free((void *)p); 
+  //     }
+  //   }
+  // }
+
+  // // 回收DRAM空间
+  // std::queue<Page*> dram_page_queue;
+  // dram_page_queue.push(dram_root);
+  // while (!dram_page_queue.empty()) {
+  //   int page_nums = dram_page_queue.size();
+  //   for (int i = 0; i < page_nums; i++) {
+  //     Page *p = dram_page_queue.front();
+  //     dram_page_queue.pop();
+
+  //     // copy child page
+  //     bool has_child = p->hdr.level != 0;
+  //     if (has_child) // 还有孩子
+  //       dram_page_queue.push(p->hdr.leftmost_ptr);
+
+  //     for (int j = 0; j <= p->hdr.last_index; j++) {
+  //       if (has_child) // 还有孩子
+  //         dram_page_queue.push((Page*)p->records[j].ptr);
+  //     }
+
+  //     delete p; // XXX：如果有前台线程在对内存子树进行搜索，则会崩溃，需要延迟回收。
+  //   }
+  // }
+
   nvm_root_ = sub_root_;
   subtree_status_ = SubTreeStatus::IN_NVM;
-
-  // 回收NVM空间
-  std::queue<Page*> old_page_queue;
-  old_page_queue.push(old_root);
-  while (!old_page_queue.empty()) {
-    int page_nums = old_page_queue.size();
-    for (int i = 0; i < page_nums; i++) {
-      p = old_page_queue.front();
-      old_page_queue.pop();
-
-      bool has_child = p->hdr.level != 0;
-      if (has_child) // 还有孩子
-        old_page_queue.push(p->hdr.leftmost_ptr);
-
-      for (int j = 0; j <= p->hdr.last_index; j++) {
-        if (has_child) // 还有孩子
-          old_page_queue.push((Page*)p->records[j].ptr);
-      }
-
-      delete p; // 或者交给后台线程回收？
-    }
-  }
-
-  // 回收DRAM空间
-  std::queue<Page*> dram_page_queue;
-  dram_page_queue.push(dram_root);
-  while (!dram_page_queue.empty()) {
-    int page_nums = dram_page_queue.size();
-    for (int i = 0; i < page_nums; i++) {
-      p = dram_page_queue.front();
-      dram_page_queue.pop();
-
-      // copy child page
-      bool has_child = p->hdr.level != 0;
-      if (has_child) // 还有孩子
-        dram_page_queue.push(p->hdr.leftmost_ptr);
-
-      for (int j = 0; j <= p->hdr.last_index; j++) {
-        if (has_child) // 还有孩子
-          dram_page_queue.push((Page*)p->records[j].ptr);
-      }
-
-      delete p; // XXX：如果有前台线程在对内存子树进行搜索，则会崩溃，需要延迟回收。
-    }
-  }
+  is_dirty_ = false;
 }
 
 void SubTree::move_to_dram() {
   // 层序遍历subtree，copy到内存
   nvm_root_ = sub_root_;
   Page *p = (Page *)nvm_root_;
+  assert(p->hdr.page_type == PageType::NVM_SUBTREE_PAGE);
   p_assert(p, "[move to dram]: root is null");
   Page *dram_root = new(false) Page(*(Page *)nvm_root_); // 新生成的subtree的根page
   dram_root->hdr.page_type = PageType::DRAM_CACHETREE_PAGE;
