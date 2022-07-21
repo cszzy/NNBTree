@@ -20,16 +20,16 @@ function Run() {
     echo "----------------"
     sleep 60
 
-    rm -rf /mnt/AEP0/*
-    Loadname="longlat-400m-zipf0.9"
-    # Loadname="longlat-400m"
-    date | tee multi-${dbname}-${Loadname}-th${thread}.txt
-    # gdb --args \
-    timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-        --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
-        -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-    echo "----------------"
-    sleep 60
+    # rm -rf /mnt/AEP0/*
+    # Loadname="longlat-400m-zipf0.9"
+    # # Loadname="longlat-400m"
+    # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
+    # # gdb --args \
+    # timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    #     --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    # echo "----------------"
+    # sleep 60
 
     # rm -rf /mnt/AEP0/*
     # # Loadname="longtitudes-200m"
@@ -67,17 +67,17 @@ function run_all() {
 }
 
 dbname="nnbtree"
-loadnum=400000000
+loadnum=150000000
 opnum=10000000
 scansize=4000000
 
-for thread in 24
+for thread in 30
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done
 
 dbname="fastfair"
-for thread in 32
+for thread in 30
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done

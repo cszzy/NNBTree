@@ -21,7 +21,7 @@
 #include "numa_config.h"
 #include "tree_log.h"
 
-#define USE_SPINLOCK // 使用spinlock还是mutex
+// #define USE_SPINLOCK // 使用spinlock还是mutex
 
 #define CACHE_SUBTREE // 是否开启子树缓存
 
@@ -33,7 +33,7 @@
 
 #define CACHE_LINE_SIZE 64
 
-#define TOPK_SUBTREE_NUM 1000
+#define TOPK_SUBTREE_NUM 300
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -207,10 +207,9 @@ class Statistics {
             }
 
             // 计算所有子树热度 O(N)
-            // 这一步现在放到topk中进行计算，减少一次扫描
-            // for (auto subtree : staticstic_subtree) {
-            //     subtree->cal_hotness();
-            // }
+            for (auto subtree : staticstic_subtree) {
+                subtree->cal_hotness();
+            }
 
             // O(N)得到topk，同时将热点nvm子树设置为待缓存，将非热点nvm子树设置为待淘汰
             topk(staticstic_subtree, k);
@@ -243,6 +242,12 @@ class Statistics {
                         // }
                     }
 
+                    // for (int i = 0; i < 1000; i++) {
+                    //   std::cout << arr[i]->get_hotness() << " ";
+                    //   if (i % 20 == 0)
+                    //     std::cout << std::endl;
+                    // }
+
                     for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
                         if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
                                 (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
@@ -266,38 +271,19 @@ class Statistics {
         }
 
         int partition(std::vector<SubTree *> &arr, int low, int high) {
-            bool need_cal_hotness = false;
-            if (low == 0 && high == arr.size() - 1) {
-                // 第一次partition，需要计算热度
-                need_cal_hotness = true;
-            }
             int pos = low + random() % (high - low + 1);
-            // int pos = (low + high) >> 1;
-            if (need_cal_hotness) {
-                arr[pos]->cal_hotness();
-            }
             uint64_t pivot = arr[pos]->get_hotness();
             std::swap(arr[low], arr[pos]);
             int left = low + 1;
             int right = high;
-            if (need_cal_hotness) {
-                arr[left]->cal_hotness();
-                arr[right]->cal_hotness();
-            }
 
             while (true) {
                 while (left <= right && arr[left]->get_hotness() <= pivot) {
                     left++;
-                    if (left <= right && need_cal_hotness) {
-                        arr[left]->cal_hotness();
-                    }
                 }
 
                 while (left <= right && arr[right]->get_hotness() >= pivot) {
                     right--;
-                    if (left <= right && need_cal_hotness) {
-                        arr[right]->cal_hotness();
-                    }
                 }
 
                 if (left < right) {
@@ -327,8 +313,8 @@ std::vector<std::thread> bg_thread; // 后台线程：用来统计和压缩
 void bgthread_func(int bg_thread_id) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
     while (true) {
-        // statis_->select_topk(TOPK_SUBTREE_NUM);
-        std::this_thread::sleep_for(std::chrono::seconds(15));
+        statis_->select_topk(TOPK_SUBTREE_NUM);
+        std::this_thread::sleep_for(std::chrono::seconds(30));
     }
 }
 

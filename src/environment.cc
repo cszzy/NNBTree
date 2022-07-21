@@ -44,7 +44,7 @@ void env_exit()
 {
     if(data_alloc) delete data_alloc;
     if(common_alloc) delete common_alloc;
-    if (nnbtree::treelog_pool) delete nnbtree::treelog_pool;
+    // if (nnbtree::treelog_pool) delete nnbtree::treelog_pool;
 }
 
 void show_stat()

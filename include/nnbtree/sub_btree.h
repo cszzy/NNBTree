@@ -116,7 +116,7 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   subtree_lock.lock();
 #ifdef CACHE_SUBTREE
   if (subtree_status_ == SubTreeStatus::IN_DRAM) {
-    treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
+    // treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
   } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
     // 刷回nvm
     move_to_nvm();
@@ -139,11 +139,11 @@ retry:
   }
 
   if (!p->store(this, NULL, key, right, true, false)) { // store
-    p_assert(false, "should not happen");
     if (index_tree_root->has_hasindextree()) {
       subtree_lock.unlock();
       return index_tree_root->btree_insert(key, right);
     }
+    p_assert(false, "should not happen");
     // subtree_lock.unlock();
     // btree_insert(key, right);
     
@@ -166,7 +166,8 @@ retry:
 
   subtree_lock.unlock();
 
-  btree_search(key);
+  // if (index_tree_root->has_hasindextree());
+  //   index_tree_root->btree_search(key);
 }
 
 // XXX: 需要判断store应该落在indextree还是subtree

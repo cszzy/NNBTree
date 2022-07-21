@@ -81,7 +81,7 @@ void show_help(char* prog) {
     "    --help[-h]               show help" << std::endl;
 }
 
-int thread_num = 1;
+int thread_num = 2;
 size_t LOAD_SIZE   = 10000000;
 size_t PUT_SIZE    = 6000000;
 size_t GET_SIZE    = 1000000;
@@ -370,43 +370,43 @@ int main(int argc, char *argv[]) {
               << "iops " << (double)(LOAD_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
 
-//   {
-//      // Put
-//     clear_cache();
-//     std::vector<std::thread> threads;
-//     std::atomic_int thread_id_count(0);
-//     size_t per_thread_size = PUT_SIZE / thread_num;
-//     timer.Clear();
-//     timer.Record("start");
-//     for(int i = 0; i < thread_num; i ++) {
-//         threads.emplace_back([&](){
-//             int thread_id = thread_id_count.fetch_add(1);
-//             nnbtree::my_thread_id = thread_id;
-// #ifdef NUMA_TEST
-//             nnbtree::bindCore(nnbtree::my_thread_id);
-// #endif
-//             size_t start_pos = thread_id * per_thread_size + LOAD_SIZE;
-//             size_t size = (thread_id == thread_num-1) ? PUT_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
-//             for (size_t j = 0; j < size; ++j) {
-//                 auto ret = db->Put(data_base[start_pos+j], data_base[start_pos+j]);
-//                 if (ret != 1) {
-//                     std::cout << "Put error, key: " << data_base[start_pos+j] << ", size: " << j << std::endl;
-//                     assert(0);
-//                 }
-//                 if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 
-//             }
-//         });
-//     }
-//     for (auto& t : threads) {
-//       t.join();
-//     }
+  {
+     // Put
+    clear_cache();
+    std::vector<std::thread> threads;
+    std::atomic_int thread_id_count(0);
+    size_t per_thread_size = PUT_SIZE / thread_num;
+    timer.Clear();
+    timer.Record("start");
+    for(int i = 0; i < thread_num; i ++) {
+        threads.emplace_back([&](){
+            int thread_id = thread_id_count.fetch_add(1);
+            nnbtree::my_thread_id = thread_id;
+#ifdef NUMA_TEST
+            nnbtree::bindCore(nnbtree::my_thread_id);
+#endif
+            size_t start_pos = thread_id * per_thread_size + LOAD_SIZE;
+            size_t size = (thread_id == thread_num-1) ? PUT_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
+            for (size_t j = 0; j < size; ++j) {
+                auto ret = db->Put(data_base[start_pos+j], data_base[start_pos+j]);
+                if (ret != 1) {
+                    std::cout << "Put error, key: " << data_base[start_pos+j] << ", size: " << j << std::endl;
+                    assert(0);
+                }
+                if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 
+            }
+        });
+    }
+    for (auto& t : threads) {
+      t.join();
+    }
         
-//     timer.Record("stop");
-//     us_times = timer.Microsecond("stop", "start");
-//     std::cout << "[Metic-Put]: Put " << PUT_SIZE << ": " 
-//               << "cost " << us_times/1000000.0 << "s, " 
-//               << "iops " << (double)(PUT_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
-//   }
+    timer.Record("stop");
+    us_times = timer.Microsecond("stop", "start");
+    std::cout << "[Metic-Put]: Put " << PUT_SIZE << ": " 
+              << "cost " << us_times/1000000.0 << "s, " 
+              << "iops " << (double)(PUT_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
+  }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
 
@@ -455,74 +455,74 @@ int main(int argc, char *argv[]) {
               << "iops " << (double)(GET_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
 
-  // // mixed test
-  // {
-  //   // std::vector<float> insert_ratios = {0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0};
-  //   std::vector<float> insert_ratios = {0.3, 0.7};
-  //   float insert_ratio = 0;
-  //   for (int ini = 0; ini < insert_ratios.size(); ini++) {
-  //     insert_ratio = insert_ratios[ini];
-  //     // uint64_t *mix_test = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.9);
-  //     uint64_t *mix_test = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
+  // mixed test
+  {
+    // std::vector<float> insert_ratios = {0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0};
+    std::vector<float> insert_ratios = {0.3, 0.7};
+    float insert_ratio = 0;
+    for (int ini = 0; ini < insert_ratios.size(); ini++) {
+      insert_ratio = insert_ratios[ini];
+      // uint64_t *mix_test = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.9);
+      uint64_t *mix_test = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
 
-  //     std::vector<std::thread> threads;
-  //     std::atomic_int thread_id_count(0);
-  //     size_t per_thread_size = GET_SIZE / thread_num;
+      std::vector<std::thread> threads;
+      std::atomic_int thread_id_count(0);
+      size_t per_thread_size = GET_SIZE / thread_num;
 
-  //     vector<vector<float>> insert_ratio_arr(thread_num, vector<float>());
-  //     util::FastRandom ranny(18);
-  //     for (int i = 0; i < thread_num; i++) {
-  //       for (int j = 0; j < GET_SIZE / (thread_num == 1 ? 1 : thread_num - 1); j++) {
-  //         insert_ratio_arr[i].push_back(ranny.ScaleFactor());
-  //       }
-  //     }
+      vector<vector<float>> insert_ratio_arr(thread_num, vector<float>());
+      util::FastRandom ranny(18);
+      for (int i = 0; i < thread_num; i++) {
+        for (int j = 0; j < GET_SIZE / (thread_num == 1 ? 1 : thread_num - 1); j++) {
+          insert_ratio_arr[i].push_back(ranny.ScaleFactor());
+        }
+      }
 
-  //     clear_cache();
+      clear_cache();
 
-  //     timer.Clear();
-  //     timer.Record("start");
-  //     for (int i = 0; i < thread_num; ++i) {
-  //         threads.emplace_back([&](){
-  //             int thread_id = thread_id_count.fetch_add(1);
-  //             size_t get_start_pos = thread_id *per_thread_size;
-  //             size_t put_start_pos = thread_id * per_thread_size + LOAD_SIZE + PUT_SIZE * (1 + ini);
-  //             size_t size = (thread_id == thread_num-1) ? GET_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
-  //             size_t value;
-  //             int put_op = 0, get_op = 0;
-  //             for (size_t j = 0; j < size; ++j) {
-  //                 if (insert_ratio_arr[thread_id][j] < insert_ratio) {
-  //                   put_op++;
-  //                   int ret = db->Put(data_base[put_start_pos], data_base[put_start_pos++]);
-  //                   if (ret != 1) {
-  //                     std::cout << "Put error, key: " << data_base[put_start_pos-1] << ", size: " << j << std::endl;
-  //                     assert(0);
-  //                   }
-  //                 } else {
-  //                   get_op++;
-  //                   int ret = db->Get(mix_test[get_start_pos+j], value);
-  //                   if (ret != 1 || value != mix_test[get_start_pos+j]) {
-  //                       std::cout << "Get error!" << std::endl;
-  //                   }
-  //                 }
-  //                 if(thread_id == 0 && (j + 1) % 100000 == 0) {
-  //                   std::cout << "Operate: " << j + 1 << " get_op: " << get_op << " put_op: " << put_op << std::endl;
-  //                   put_op = get_op = 0;
-  //                 }  
-  //             }
-  //         });
-  //     }
+      timer.Clear();
+      timer.Record("start");
+      for (int i = 0; i < thread_num; ++i) {
+          threads.emplace_back([&](){
+              int thread_id = thread_id_count.fetch_add(1);
+              size_t get_start_pos = thread_id *per_thread_size;
+              size_t put_start_pos = thread_id * per_thread_size + LOAD_SIZE + PUT_SIZE * (1 + ini);
+              size_t size = (thread_id == thread_num-1) ? GET_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
+              size_t value;
+              int put_op = 0, get_op = 0;
+              for (size_t j = 0; j < size; ++j) {
+                  if (insert_ratio_arr[thread_id][j] < insert_ratio) {
+                    put_op++;
+                    int ret = db->Put(data_base[put_start_pos], data_base[put_start_pos++]);
+                    if (ret != 1) {
+                      std::cout << "Put error, key: " << data_base[put_start_pos-1] << ", size: " << j << std::endl;
+                      assert(0);
+                    }
+                  } else {
+                    get_op++;
+                    int ret = db->Get(mix_test[get_start_pos+j], value);
+                    if (ret != 1 || value != mix_test[get_start_pos+j]) {
+                        std::cout << "Get error!" << std::endl;
+                    }
+                  }
+                  if(thread_id == 0 && (j + 1) % 100000 == 0) {
+                    std::cout << "Operate: " << j + 1 << " get_op: " << get_op << " put_op: " << put_op << std::endl;
+                    put_op = get_op = 0;
+                  }  
+              }
+          });
+      }
 
-  //     for (auto& t : threads) {
-  //       t.join();
-  //     }
+      for (auto& t : threads) {
+        t.join();
+      }
           
-  //     timer.Record("stop");
-  //     us_times = timer.Microsecond("stop", "start");
-  //     std::cout << "[Metic-Mix]: Mix "<< insert_ratio << " " << GET_SIZE
-  //               << "cost " << us_times/1000000.0 << "s, " 
-  //               << "iops " << (double)(GET_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
-  //   }
-  // }
+      timer.Record("stop");
+      us_times = timer.Microsecond("stop", "start");
+      std::cout << "[Metic-Mix]: Mix "<< insert_ratio << " " << GET_SIZE
+                << "cost " << us_times/1000000.0 << "s, " 
+                << "iops " << (double)(GET_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
+    }
+  }
 
   delete db;
 
