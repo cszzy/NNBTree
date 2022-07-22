@@ -70,15 +70,10 @@ class Spinlock {
 };
 
 // const size_t NVM_ValueSize = 256;
-static inline void alloc_memalign(void **ret, size_t alignment, size_t size) {
-#ifdef USE_MEM
-  int res = posix_memalign(ret, alignment, size);
-  p_assert(res == 0, "mem alloc fail");
-#else
-  // *ret =  NVM::data_alloc->alloc(size);
-  *ret = nnbtree::index_pmem_alloc(size);
-  p_assert(*ret, "mem/pmem alloc fail");
-#endif
+static inline void *alloc_memalign(size_t alignment, size_t size) {
+  void *ret = nnbtree::index_pmem_alloc(size);
+  p_assert(ret, "mem/pmem alloc fail");
+  return ret;
 }
 
 class Page;
@@ -98,8 +93,8 @@ private:
   // int32_t numa_id; // 标记子树在哪个numa?但是子树下的page仍然处于不同的numa节点=_=
   SubTreeStatus subtree_status_; // 标识subtree状态
   // char *root; // 整个B+树的根
-  char *sub_root_; // 8B 正在使用的subtree的根
-  char *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
+  Page *sub_root_; // 8B 正在使用的subtree的根
+  Page *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
   SubTree *left_sibling_subtree_; //左子树
   SubTree *right_sibling_subtree_; //右子树
   uint64_t read_times_[numa_node_num]; // 各numa节点写操作次数
@@ -313,7 +308,7 @@ void bgthread_func(int bg_thread_id) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
     while (true) {
         statis_->select_topk(TOPK_SUBTREE_NUM);
-        std::this_thread::sleep_for(std::chrono::seconds(15));
+        std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }
 
@@ -610,16 +605,19 @@ public:
 };
 
   void * Page::operator new(size_t size, bool inpmem) {
+    // if (inpmem)
+    //   std::cout << "size:" << size << std::endl;
+    // getchar();
     void *ret = NULL;
-    // ret = malloc(size);
-    if (inpmem)
-      alloc_memalign(&ret, 64, size);
+    if (inpmem) {
+      ret = alloc_memalign(64, size);
+    }
     else {
       // int res = posix_memalign(&ret, 8, size);
       ret = malloc(size);
-      assert(ret);
       // p_assert(res == 0, "alloc fail, res: %d, size: %ld", res, size);
     }
+    assert(ret);
     return ret;
   }
 
@@ -1065,6 +1063,7 @@ public:
       return NULL;
     }
 
+    // XXX: bug
     // If this node has a sibling node,
     if (hdr.right_sibling_ptr && (hdr.right_sibling_ptr != invalid_sibling)) {
       // Compare this key with the first key of the sibling
@@ -1164,7 +1163,7 @@ public:
 
       if (hdr.page_type == PageType::NVM_SUBTREE_PAGE) {
         // Set a new root or insert the split key to the parent
-        if (bt->sub_root_ == (char *)this) { // only one node can update the root ptr
+        if (bt->sub_root_ == this) { // only one node can update the root ptr
           // zzy add
           // 如果子树高度超过MAX_SUBTREE_HEIGHT
             // 如果内存还没创建index_tree则创建
@@ -1241,7 +1240,7 @@ public:
         
       } else if (hdr.page_type == PageType::DRAM_CACHETREE_PAGE) {
         // Set a new root or insert the split key to the parent
-        if (bt->sub_root_ == (char *)this) { // only one node can update the root ptr
+        if (bt->sub_root_ == this) { // only one node can update the root ptr
           // zzy add
           // 如果子树高度超过MAX_SUBTREE_HEIGHT
             // 如果内存还没创建index_tree则创建

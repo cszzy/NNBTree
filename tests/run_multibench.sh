@@ -67,17 +67,17 @@ function run_all() {
 }
 
 dbname="nnbtree"
-loadnum=150000000
+loadnum=400000000
 opnum=10000000
 scansize=4000000
 
-for thread in 30
+for thread in 31
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done
 
 dbname="fastfair"
-for thread in 30
+for thread in 31
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done
