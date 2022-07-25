@@ -308,7 +308,7 @@ void bgthread_func(int bg_thread_id) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
     while (true) {
         statis_->select_topk(TOPK_SUBTREE_NUM);
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::this_thread::sleep_for(std::chrono::seconds(10));
     }
 }
 
@@ -463,7 +463,7 @@ public:
 class entry {
 private:
   entry_key_t key; // 8 bytes
-  char *ptr;       // 8 bytes
+  Page *ptr;       // 8 bytes
 
 public:
   entry() {
@@ -511,7 +511,7 @@ public:
     hdr.leftmost_ptr = left;
     hdr.level = level;
     records[0].key = key;
-    records[0].ptr = (char *)right;
+    records[0].ptr = right;
     records[1].ptr = NULL;
 
     hdr.last_index = 0;
@@ -535,7 +535,7 @@ public:
     hdr.leftmost_ptr = (Page *)left;
     hdr.level = level;
     records[0].key = key;
-    records[0].ptr = (char *)right;
+    records[0].ptr = (Page *)right;
     records[1].ptr = NULL;
 
     hdr.last_index = 0;
@@ -660,7 +660,7 @@ public:
       // NVM::const_stat.AddCompare();
       if (!shift && records[i].key == key) {
         records[i].ptr =
-            (i == 0) ? (char *)hdr.leftmost_ptr : records[i - 1].ptr;
+            (i == 0) ? hdr.leftmost_ptr : records[i - 1].ptr;
         shift = true;
       }
       // shift
@@ -730,9 +730,9 @@ public:
       entry *new_entry = (entry *)&records[0];
       entry *array_end = (entry *)&records[1];
       new_entry->key = (entry_key_t)key;
-      new_entry->ptr = (char *)ptr;
+      new_entry->ptr = (Page *)ptr;
 
-      array_end->ptr = (char *)NULL;
+      array_end->ptr = NULL;
 
       if (flush) {
         if (page_is_inpmem()) {
@@ -777,7 +777,7 @@ public:
         } else {
           records[i + 1].ptr = records[i].ptr;
           records[i + 1].key = key;
-          records[i + 1].ptr = ptr;
+          records[i + 1].ptr = (Page *)ptr;
 
           if (flush) {
             if (page_is_inpmem()) {
@@ -789,9 +789,9 @@ public:
         }
       }
       if (inserted == 0) {
-        records[0].ptr = (char *)hdr.leftmost_ptr;
+        records[0].ptr = hdr.leftmost_ptr;
         records[0].key = key;
-        records[0].ptr = ptr;
+        records[0].ptr = (Page *)ptr;
         if (flush) {
           if (page_is_inpmem()) {
             clflush((char *)&records[0], sizeof(entry));
@@ -1065,7 +1065,7 @@ public:
 
     // XXX: bug
     // If this node has a sibling node,
-    if (hdr.right_sibling_ptr && (hdr.right_sibling_ptr != invalid_sibling)) {
+    if (hdr.right_sibling_ptr) {
       // Compare this key with the first key of the sibling
       if (key > hdr.right_sibling_ptr->records[0].key) { 
         // 如果兄弟节点的最小key大于要插入的key,
@@ -1109,12 +1109,12 @@ public:
       int sibling_cnt = 0;
       if (hdr.leftmost_ptr == NULL) { // leaf node
         for (int i = m; i < num_entries; ++i) {
-          sibling->insert_key(records[i].key, records[i].ptr, &sibling_cnt,
+          sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
                               false);
         }
       } else { // internal node
         for (int i = m + 1; i < num_entries; ++i) { // XXX: 这里i从m+1似乎并不平均，假设num_entries=3，则实际没移动
-          sibling->insert_key(records[i].key, records[i].ptr, &sibling_cnt,
+          sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
                               false);
         }
         sibling->hdr.leftmost_ptr = (Page *)records[m].ptr;
@@ -1378,12 +1378,12 @@ public:
       if (hdr.leftmost_ptr == NULL) { // leaf node
         p_assert(false, "should not be here!");
         for (int i = m; i < num_entries; ++i) {
-          sibling->insert_key(records[i].key, records[i].ptr, &sibling_cnt,
+          sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
                               false);
         }
       } else { // internal node
         for (int i = m + 1; i < num_entries; ++i) { // XXX: 这里i从m+1似乎并不平均，假设num_entries=3，则实际没移动
-          sibling->insert_key(records[i].key, records[i].ptr, &sibling_cnt,
+          sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
                               false);
         }
         sibling->hdr.leftmost_ptr = (Page *)records[m].ptr;
@@ -1454,7 +1454,7 @@ public:
         off = old_off;
 
         entry_key_t tmp_key;
-        char *tmp_ptr;
+        Page *tmp_ptr;
 
         if (IS_FORWARD(previous_switch_counter)) { // 
           if ((tmp_key = current->records[0].key) > min) {
@@ -1530,8 +1530,8 @@ public:
   char * Page::linear_search(entry_key_t key) {
     int i = 1;
     uint8_t previous_switch_counter;
-    char *ret = NULL;
-    char *t;
+    Page *ret = NULL;
+    Page *t;
     entry_key_t k;
 
     if (hdr.leftmost_ptr == NULL) { // Search a leaf node
@@ -1594,14 +1594,14 @@ public:
       } while (hdr.switch_counter != previous_switch_counter);
 
       if (ret) {
-        return ret;
+        return (char *)ret;
       }
 
     //   zzy add
     // NVM::const_stat.AddCompare();
 
-      if ((t = (char *)hdr.right_sibling_ptr) && key >= ((Page *)t)->records[0].key) {
-        return t;
+      if ((t = hdr.right_sibling_ptr) && key >= t->records[0].key) {
+        return (char *)t;
       }
         
       return NULL;
@@ -1614,7 +1614,7 @@ public:
             // zzy add
             // NVM::const_stat.AddCompare();
           if (key < (k = records[0].key)) {
-            if ((t = (char *)hdr.leftmost_ptr) != records[0].ptr) {
+            if ((t = hdr.leftmost_ptr) != records[0].ptr) {
               ret = t;
               continue;
             }
@@ -1641,7 +1641,7 @@ public:
             // NVM::const_stat.AddCompare();
             if (key >= (k = records[i].key)) {
               if (i == 0) {
-                if ((char *)hdr.leftmost_ptr != (t = records[i].ptr)) {
+                if (hdr.leftmost_ptr != (t = records[i].ptr)) {
                   ret = t;
                   break;
                 }
@@ -1656,16 +1656,16 @@ public:
         }
       } while (hdr.switch_counter != previous_switch_counter);
 
-      if ((t = (char *)hdr.right_sibling_ptr) != NULL) {
+      if ((t = hdr.right_sibling_ptr) != NULL) {
         //   zzy add
         // NVM::const_stat.AddCompare();
-        if (key >= ((Page *)t)->records[0].key) {
-          return t;
+        if (key >= t->records[0].key) {
+          return (char *)t;
         }
       }
 
       if (ret) {
-        return ret;
+        return (char *)ret;
       } else
         return (char *)hdr.leftmost_ptr;
     }
@@ -1736,7 +1736,7 @@ public:
         off = old_off;
 
         entry_key_t tmp_key;
-        char *tmp_ptr;
+        Page *tmp_ptr;
 
         if (IS_FORWARD(previous_switch_counter)) { // 
           if ((tmp_key = current->records[0].key) > min) {
@@ -1859,7 +1859,7 @@ public:
         off = old_off;
 
         entry_key_t tmp_key;
-        char *tmp_ptr;
+        Page *tmp_ptr;
 
         if (IS_FORWARD(previous_switch_counter)) { // 
           if ((tmp_key = current->records[0].key) > min) {

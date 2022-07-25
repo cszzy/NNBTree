@@ -113,9 +113,9 @@ void IndexTree::btree_delete_internal(entry_key_t key, char *ptr, uint32_t level
   *is_leftmost_node = false;
 
   for (int i = 0; p->records[i].ptr != NULL; ++i) {
-    if (p->records[i].ptr == ptr) {
+    if (p->records[i].ptr == (Page *)ptr) {
       if (i == 0) {
-        if ((char *)p->hdr.leftmost_ptr != p->records[i].ptr) { // 如果==,则根据FAST算法,该元素是无效的,忽略
+        if (p->hdr.leftmost_ptr != p->records[i].ptr) { // 如果==,则根据FAST算法,该元素是无效的,忽略
           *deleted_key = p->records[i].key;
           *left_sibling = p->hdr.leftmost_ptr;
           p->remove(this, *deleted_key, false, false);

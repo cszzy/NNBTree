@@ -81,7 +81,7 @@ void show_help(char* prog) {
     "    --help[-h]               show help" << std::endl;
 }
 
-int thread_num = 30;
+int thread_num = 1;
 size_t LOAD_SIZE   = 150000000;
 size_t PUT_SIZE    = 6000000;
 size_t GET_SIZE    = 1000000;
