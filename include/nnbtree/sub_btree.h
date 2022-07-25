@@ -126,9 +126,6 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
     // 刷回nvm
     move_to_nvm();
-    // 释放日志，设置日志指针为null
-    // delete treelog_;
-    // treelog_ = nullptr;
   }
 #endif
 retry:
@@ -156,18 +153,14 @@ retry:
     goto retry;
   }
 
+#ifdef CACHE_SUBTREE
   if (subtree_status_ == SubTreeStatus::IN_DRAM || 
     subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM)
     is_dirty_ = true;
   write_times_[numa_map[my_thread_id]]++;
 
-#ifdef CACHE_SUBTREE
   // 检测是否需要缓存
   if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
-    // 分配日志
-    // treelog_ = new TreeLog();
-    // assert(treelog_);
-
     // 移到内存
     move_to_dram();
   }
@@ -366,6 +359,7 @@ void SubTree::unlock_subtree() {
   subtree_lock.unlock();
 }
 
+// 刷回NVM,同时删除log
 void SubTree::move_to_nvm() {
   // 层序遍历dram tree, 如果是脏树则写回nvm
   Page *dram_root = sub_root_;
@@ -440,6 +434,10 @@ retry:
     }
   }
 
+#ifdef BG_GC
+  std::list<Page *> gc_list;
+#endif
+
   if (is_dirty_ && nvm_root_) { // 对应不是在内存中分裂产生的子树的情况
     // 设置nvm子树为新子树，释放旧子树
     Page *old_root = nvm_root_;
@@ -468,7 +466,11 @@ retry:
         // assert(p->hdr.page_type == PageType::NVM_SUBTREE_PAGE);
         // if (p->hdr.level == 0)
         //   std::cout << p << " ";
-        index_pmem_free(p); 
+#ifdef BG_GC
+        gc_list.push_back(p);
+#else
+        index_pmem_free(p);
+#endif
       }
     }
     // std::cout << std::endl;
@@ -500,20 +502,35 @@ retry:
 
       if(p->hdr.level == 1)
         dram_page_queue.push(nullptr);
-
       // assert(p->hdr.page_type == PageType::DRAM_CACHETREE_PAGE);
       // if (p->hdr.level == 0)
           // std::cout << p << " " << std::flush;
-      delete p; // XXX：如果有前台线程在对内存子树进行搜索，则会崩溃，需要延迟回收。
+#ifdef BG_GC
+        gc_list.push_back(p);
+#else
+        delete p; // XXX：如果有前台线程在对内存子树进行搜索，则会崩溃，需要延迟回收。
+#endif
     }
     // std::cout << std::endl << std::flush;
   }
 
   subtree_status_ = SubTreeStatus::IN_NVM;
   is_dirty_ = false;
+
+#ifdef BG_GC
+  statis_->insert_gc_page(gc_list);      
+#endif
+
+  // 释放日志，设置日志指针为null
+  delete treelog_;
+  treelog_ = nullptr;
 }
 
 void SubTree::move_to_dram() {
+  // 分配日志
+  treelog_ = new TreeLog();
+  assert(treelog_);
+
   // 层序遍历subtree，copy到内存
   // assert(subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM);
   // assert((sub_root_)->hdr.page_type == PageType::NVM_SUBTREE_PAGE);

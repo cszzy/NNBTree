@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <vector>
 #include <unordered_set>
+#include <list>
 
 #include "nvm_alloc.h"
 #include "common.h"
@@ -26,6 +27,10 @@
 #define CACHE_SUBTREE // 是否开启子树缓存
 
 #define MIGRATE_SUBTREE // 是否开启子树迁移
+
+#define BG_THREAD_WORK // 后台线程也参与缓存和迁移
+
+#define BG_GC // BG线程进行垃圾回收
 
 #define BG_THREAD_NUMS 1
 
@@ -177,145 +182,182 @@ class NNBTree;
 NNBTree *index_tree_root;
 
 class Statistics {
-    public:
-        Statistics() {}
+  public:
+    Statistics() {
+#ifdef BG_GC
+      gc_page_list = new std::list<Page *>();
+#endif
+    }
 
-        ~Statistics() {}
+    ~Statistics() {
+#ifdef BG_GC
+      delete gc_page_list;
+#endif
+    }
 
-        void insert_subtree(SubTree * subtree) {
-            all_subtree_lock.lock();
-            all_subtree.push_back(subtree);
-            all_subtree_lock.unlock();
+    void insert_subtree(SubTree * subtree) {
+      all_subtree_lock.lock();
+      all_subtree.push_back(subtree);
+      all_subtree_lock.unlock();
+    }
+
+#ifdef BG_GC
+    void insert_gc_page(Page *page);
+    void insert_gc_page(const std::list<Page *> &page_list);
+    void insert_gc_page(const std::vector<Page *> &page_list);
+    void do_gc();
+#endif
+
+    // 选择前k个热点子树，目前只考虑缓存
+    void select_topk(int k) {  
+        // 把子树复制过来 O(N/k)
+        all_subtree_lock.lock();
+        staticstic_subtree.insert(staticstic_subtree.end(), 
+                all_subtree.begin() + staticstic_subtree.size(), all_subtree.end());
+        all_subtree_lock.unlock();
+
+        if (unlikely(staticstic_subtree.size() < k)) { // 子树总数小于缓存数
+            return;
         }
 
-        // 选择前k个热点子树，目前只考虑缓存
-        void select_topk(int k) {  
-            // 把子树复制过来 O(N/k)
-            all_subtree_lock.lock();
-            staticstic_subtree.insert(staticstic_subtree.end(), 
-                    all_subtree.begin() + staticstic_subtree.size(), all_subtree.end());
-            all_subtree_lock.unlock();
-
-            if (unlikely(staticstic_subtree.size() < k)) { // 子树总数小于缓存数
-                return;
-            }
-
-            // 计算所有子树热度 O(N)
-            for (auto subtree : staticstic_subtree) {
-                subtree->cal_hotness();
-            }
-
-            // O(N)得到topk，同时将热点nvm子树设置为待缓存，将非热点nvm子树设置为待淘汰
-            topk(staticstic_subtree, k);
-            std::cout << "select topk" << std::endl;
+        // 计算所有子树热度 O(N)
+        for (auto subtree : staticstic_subtree) {
+            subtree->cal_hotness();
         }
 
-    private:
-        void topk(std::vector<SubTree *> &arr, int k) {
-            if (unlikely(arr.size() < k)) {
-                // subtree总数小于k，不进行缓存
-                return;
-            }
+        // O(N)得到topk，同时将热点nvm子树设置为待缓存，将非热点nvm子树设置为待淘汰
+        topk(staticstic_subtree, k);
+        std::cout << "select topk" << std::endl;
 
-            srand((unsigned)time(NULL));
-            int left = 0;
-            int right = arr.size() - 1;
-            int target = arr.size() - k;
-            while (true) {
-                int pivotIndex = partition(arr, left, right);
-                if (pivotIndex == target) {
-                    // 设置前k个nvm子树的状态为NEED_MOVE_TO_DRAM
-                    for (int i = arr.size() - 1; i >= target; i--) {
-                        topk_subtree.erase(arr[i]);
-                        if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
-                            arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_DRAM);
-                        }
-                        //  else if (arr[i]->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
-                        //     arr[i]->setSubTreeStatus(SubTreeStatus::IN_DRAM);
-                        //     // std::cout << "dram subtree hasn't been move to nvm" << std::endl;
-                        // }
+        // 后台线程也参与缓存和迁移
+// #ifdef CACHE_SUBTREE
+// #ifdef BG_THREAD_WORK
+//             for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
+//               (*iter)->lock_subtree();
+//               if ((*iter)->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+//                 (*iter)->move_to_dram();
+//               } else if ((*iter)->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+//                 (*iter)->move_to_nvm();
+//               }
+//               (*iter)->unlock_subtree();
+//             }
+// #endif 
+// #endif
+    }
+
+  private:
+    void topk(std::vector<SubTree *> &arr, int k) {
+        if (unlikely(arr.size() < k)) {
+            // subtree总数小于k，不进行缓存
+            return;
+        }
+
+        srand((unsigned)time(NULL));
+        int left = 0;
+        int right = arr.size() - 1;
+        int target = arr.size() - k;
+        while (true) {
+            int pivotIndex = partition(arr, left, right);
+            if (pivotIndex == target) {
+                // 设置前k个nvm子树的状态为NEED_MOVE_TO_DRAM
+                for (int i = arr.size() - 1; i >= target; i--) {
+                    topk_subtree.erase(arr[i]);
+                    if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
+                        arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_DRAM);
                     }
-
-                    // for (int i = 0; i < 1000; i++) {
-                    //   std::cout << arr[i]->get_hotness() << " ";
-                    //   if (i % 20 == 0)
-                    //     std::cout << std::endl;
+                    //  else if (arr[i]->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+                    //     arr[i]->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+                    //     // std::cout << "dram subtree hasn't been move to nvm" << std::endl;
                     // }
-
-                    for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
-                        if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
-                                (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
-                            }
-                    }
-
-                    // 重置topk
-                    topk_subtree.clear();
-                    for (int i = arr.size() - 1; i >= target; i--) {
-                        topk_subtree.insert(arr[i]);
-                    }
-
-                    return; 
-                } else if (pivotIndex < target) {
-                    left = pivotIndex + 1; 
-                } else {
-                    // pivotIndex > target
-                    right = pivotIndex - 1; 
                 }
+
+                // for (int i = 0; i < 1000; i++) {
+                //   std::cout << arr[i]->get_hotness() << " ";
+                //   if (i % 20 == 0)
+                //     std::cout << std::endl;
+                // }
+
+                for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
+                    if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
+                            (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+                        }
+                }
+
+                // 重置topk
+                topk_subtree.clear();
+                for (int i = arr.size() - 1; i >= target; i--) {
+                    topk_subtree.insert(arr[i]);
+                }
+
+                return; 
+            } else if (pivotIndex < target) {
+                left = pivotIndex + 1; 
+            } else {
+                // pivotIndex > target
+                right = pivotIndex - 1; 
             }
         }
+    }
 
-        int partition(std::vector<SubTree *> &arr, int low, int high) {
-            int pos = low + random() % (high - low + 1);
-            uint64_t pivot = arr[pos]->get_hotness();
-            std::swap(arr[low], arr[pos]);
-            int left = low + 1;
-            int right = high;
+  int partition(std::vector<SubTree *> &arr, int low, int high) {
+    int pos = low + random() % (high - low + 1);
+    uint64_t pivot = arr[pos]->get_hotness();
+    std::swap(arr[low], arr[pos]);
+    int left = low + 1;
+    int right = high;
 
-            while (true) {
-                while (left <= right && arr[left]->get_hotness() <= pivot) {
-                    left++;
-                }
+    while (true) {
+      while (left <= right && arr[left]->get_hotness() <= pivot) {
+        left++;
+      }
 
-                while (left <= right && arr[right]->get_hotness() >= pivot) {
-                    right--;
-                }
+      while (left <= right && arr[right]->get_hotness() >= pivot) {
+        right--;
+      }
 
-                if (left < right) {
-                    std::swap(arr[left], arr[right]);
-                    left++;
-                    right--;
-                } else {
-                    break;
-                }
-            }
+      if (left < right) {
+        std::swap(arr[left], arr[right]);
+        left++;
+        right--;
+      } else {
+          break;
+      }
+    }
 
-            std::swap(arr[low], arr[right]);
+    std::swap(arr[low], arr[right]);
 
-            return right;
-        }
+    return right;
+  }
 
-        std::vector<SubTree *> all_subtree; // 记录所有subtree指针
-        std::mutex all_subtree_lock; // all_subtree锁，保护前台线程写和后线程读
-        std::vector<SubTree *> staticstic_subtree; // 使用topk进行统计
-        std::unordered_set<SubTree *> topk_subtree; // 记录topk子树
+  std::vector<SubTree *> all_subtree; // 记录所有subtree指针
+  std::mutex all_subtree_lock; // all_subtree锁，保护前台线程写和后线程读
+  std::vector<SubTree *> staticstic_subtree; // 使用topk进行统计
+  std::unordered_set<SubTree *> topk_subtree; // 记录topk子树
+#ifdef BG_GC
+  std::list<Page *> *gc_page_list;
+  std::mutex gc_page_list_lock;
+#endif
 };
 
-Statistics *statis_;
+Statistics *statis_ = new Statistics();
 
 std::vector<std::thread> bg_thread; // 后台线程：用来统计和压缩
 
 void bgthread_func(int bg_thread_id) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
     while (true) {
-        statis_->select_topk(TOPK_SUBTREE_NUM);
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+#ifdef BG_GC // 延迟回收
+      statis_->do_gc();
+#endif
+      statis_->select_topk(TOPK_SUBTREE_NUM);
+      std::this_thread::sleep_for(std::chrono::seconds(10));
     }
 }
 
 void start_bgthread() {
     int bg_thread_num = 1;
     for (int i = 0; i < bg_thread_num; i++) {
-        bg_thread.emplace_back(std::thread(bgthread_func, i));
+      bg_thread.emplace_back(std::thread(bgthread_func, i));
     }
 }
 
@@ -325,8 +367,7 @@ public:
       has_indextree = false;
       tree_ = (char *)new SubTree();
 
-      statis_ = new Statistics();
-      statis_->insert_subtree((SubTree *)tree_);
+      // statis_->insert_subtree((SubTree *)tree_);
 
       index_tree_root = this;
       std::cout << "index_tree_root: " << index_tree_root << std::endl;
@@ -492,7 +533,7 @@ public:
   friend class IndexTree;
 
   Page(PageType page_type_, uint32_t level) {
-    p_assert(sizeof(Page) == PAGESIZE, "class Page size is not %d", PAGE_SIZE);
+    static_assert(sizeof(Page) == PAGESIZE);
     hdr.level = level;
     records[0].ptr = NULL;
     hdr.page_type = (uint8_t)page_type_;
@@ -507,7 +548,7 @@ public:
 
   // this is called when tree grows
   Page(PageType page_type_, Page *left, entry_key_t key, Page *right, uint32_t level = 0) {
-    p_assert(sizeof(Page) == PAGESIZE, "class Page size is not %d", PAGE_SIZE);
+    static_assert(sizeof(Page) == PAGESIZE);
     hdr.leftmost_ptr = left;
     hdr.level = level;
     records[0].key = key;
@@ -1964,4 +2005,39 @@ public:
     }
     size = off;
   }
+
+#ifdef BG_GC
+  void Statistics::insert_gc_page(Page *page) {
+    gc_page_list_lock.lock();
+    gc_page_list->push_back(page);
+    gc_page_list_lock.unlock();
+  }
+
+  void Statistics::insert_gc_page(const std::list<Page *> &page_list) {
+    gc_page_list_lock.lock();
+    gc_page_list->insert(gc_page_list->end(), page_list.begin(), page_list.end());
+    gc_page_list_lock.unlock();
+  }
+
+  void Statistics::insert_gc_page(const std::vector<Page *> &page_list) {
+    gc_page_list_lock.lock();
+    gc_page_list->insert(gc_page_list->end(), page_list.begin(), page_list.end());
+    gc_page_list_lock.unlock();
+  }
+
+  void Statistics::do_gc() {
+    gc_page_list_lock.lock();
+    std::list<Page *> *tmp_list = gc_page_list;
+    gc_page_list = new std::list<Page *>();
+    gc_page_list_lock.unlock();
+
+    for (auto iter = tmp_list->begin(); iter != tmp_list->end(); iter++) {
+      if ((*iter)->page_is_inpmem()) {
+        index_pmem_free(*(iter));
+      } else {
+        delete *(iter);
+      }
+    }
+  }
+#endif
 }
