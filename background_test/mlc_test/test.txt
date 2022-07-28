@@ -1,0 +1,2 @@
+0-15 W6 seq 200m pmem /mnt/AEP1 0
+32-47 W6 seq 200m pmem /mnt/AEP1 0

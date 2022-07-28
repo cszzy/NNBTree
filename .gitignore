@@ -5,6 +5,9 @@ a.out
 
 !CMakeLists.txt
 
+!*.sh
+!background_test/**
+
 btree_concurrent
 btree_concurrent_mixed
 

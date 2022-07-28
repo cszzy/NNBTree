@@ -258,7 +258,6 @@ int main(int argc, char *argv[]) {
   std::cout << "Workload:              " << load_file << std::endl;
 
   std::vector<uint64_t> data_base;
-  Loads_type = 4;
   switch (Loads_type)
   {
   case -2:

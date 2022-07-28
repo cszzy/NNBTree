@@ -1,0 +1,32 @@
+Intel(R) Memory Latency Checker - v3.9
+Command line parameters: --loaded_latency -o./test.txt 
+Per-thread configuration from ./test.txt
+Thread id   0, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   1, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   2, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   3, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   4, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   5, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   6, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   7, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   8, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   9, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  10, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  11, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  12, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  13, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  14, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  15, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  32, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  33, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  34, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  35, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  36, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id  37, traffic pattern  W6,  seq access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+
+Measuring Loaded Latencies for the system
+Using all the threads from each core if Hyper-threading is enabled
+Inject	Latency	Bandwidth
+Delay	(ns)	MB/sec
+==========================
+ 00000	5456.32	   1212.5

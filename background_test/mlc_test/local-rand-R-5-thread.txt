@@ -1,0 +1,15 @@
+Intel(R) Memory Latency Checker - v3.9
+Command line parameters: --loaded_latency -o./test.txt 
+Per-thread configuration from ./test.txt
+Thread id   0, traffic pattern   R, rand access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   1, traffic pattern   R, rand access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   2, traffic pattern   R, rand access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   3, traffic pattern   R, rand access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+Thread id   4, traffic pattern   R, rand access,   204800 KiB buffer, pmem memory, pmem path /mnt/AEP0,	injection delay 0
+
+Measuring Loaded Latencies for the system
+Using all the threads from each core if Hyper-threading is enabled
+Inject	Latency	Bandwidth
+Delay	(ns)	MB/sec
+==========================
+ 00000	293.85	   3718.3

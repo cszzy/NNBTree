@@ -9,27 +9,27 @@ function Run() {
     scansize=$4
     thread=$5
 
-    rm -rf /mnt/AEP0/*
-    Loadname="ycsb-400m-zipf0.9"
-    # Loadname="ycsb-400m"
-    date | tee multi-${dbname}-${Loadname}-th${thread}.txt
-    # gdb --args \
-    timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-        --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
-        -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-    echo "----------------"
-    sleep 60
-
     # rm -rf /mnt/AEP0/*
-    # Loadname="longlat-400m-zipf0.9"
-    # # Loadname="longlat-400m"
+    # Loadname="ycsb-400m-zipf0.9"
+    # # Loadname="ycsb-400m"
     # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # # gdb --args \
     # timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-    #     --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    #     --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
     #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
     # echo "----------------"
     # sleep 60
+
+    rm -rf /mnt/AEP0/*
+    Loadname="longlat-400m-zipf0.9"
+    # Loadname="longlat-400m"
+    date | tee multi-${dbname}-${Loadname}-th${thread}.txt
+    # gdb --args \
+    timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+        --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+        -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    echo "----------------"
+    sleep 60
 
     # rm -rf /mnt/AEP0/*
     # # Loadname="longtitudes-200m"
