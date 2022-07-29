@@ -104,11 +104,13 @@ private:
   Page *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
   SubTree *left_sibling_subtree_; //左子树
   SubTree *right_sibling_subtree_; //右子树
-  uint64_t read_times_[numa_node_num]; // 各numa节点写操作次数
-  uint64_t write_times_[numa_node_num]; // 各numa节点读操作次数
+  // 对于read_times和write_times，只有cpu_id==nvm_id，才是本地访问，其他都是异地访问，需要计算异地访问的比重，决定是否迁移
+  uint64_t read_times_[numa_node_num][numa_node_num]; // 各numa节点cpu写各numa节点nvm次数
+  uint64_t write_times_[numa_node_num][numa_node_num]; // 各numa节点cpu读各numa节点nvm次数
   TreeLog *treelog_; // 写日志
-  uint64_t hotness_[numa_node_num]; // 记录的是上一周期的热度
+  uint64_t hotness_[numa_node_num]; // 记录的是上一周期的各个numa节点的nvm的热度(即读和写的加权和)
   uint64_t tmp_hotness; // 只使用缓存版本，记录当前热度
+  uint8_t target_numa_id; // 需要迁移/写回nvm时，目标numa_id,那么需要考虑迁移线程必须是目标numa_id线程
   bool is_dirty_; // 脏页写回NVM
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
@@ -272,12 +274,6 @@ class Statistics {
                     //     // std::cout << "dram subtree hasn't been move to nvm" << std::endl;
                     // }
                 }
-
-                // for (int i = 0; i < 1000; i++) {
-                //   std::cout << arr[i]->get_hotness() << " ";
-                //   if (i % 20 == 0)
-                //     std::cout << std::endl;
-                // }
 
                 // for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
                 //     if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
@@ -480,12 +476,13 @@ private:
 #else
   Spinlock *mtx; // subtree实际不使用这个字段
 #endif
-  uint32_t level;         // 4 bytes // 叶节点level为0, 向上累加
+  uint16_t level;         // 4 bytes // 叶节点level为0, 向上累加
   uint8_t switch_counter; // 1 bytes // 指导读线程的扫描方向, 偶数代表为insert, 奇数代表delete
   uint8_t is_deleted;     // 1 bytes // ?实际没有节点合并, 用不到
   int8_t last_index;      // 1 bytes // 指示最后条目的位置
   uint8_t page_type;      // 1 bytes // 指示page类型, 0: nvm_subtree_page, 1: dram_cachetree_page, 2: dram_indextree_page
-  // char padding[8]; // 填充
+  int8_t numa_id;        // 1 bytes // 指示page所在的numa id
+  char padding[1]; // 填充
   
 
   friend class Page;
@@ -495,7 +492,7 @@ private:
 public:
   header() : leftmost_ptr(nullptr), right_sibling_ptr(nullptr), mtx(nullptr), 
             level(0), switch_counter(0), is_deleted(false),
-            last_index(-1), page_type(PageType::UNKNOWN) {
+            last_index(-1), page_type(PageType::UNKNOWN), numa_id(-1) {
     // mtx = new std::mutex();
     // mtx = new Spinlock();
     // std::cout << " cons " << mtx << std::endl << std::flush;
@@ -551,6 +548,8 @@ public:
 #else
       hdr.mtx = new Spinlock();
 #endif
+    } else if (page_type_ == PageType::NVM_SUBTREE_PAGE) {
+      hdr.numa_id = numa_map[my_thread_id];
     }
   }
 
@@ -571,6 +570,8 @@ public:
 #else
       hdr.mtx = new Spinlock();
 #endif
+    } else if (page_type_ == PageType::NVM_SUBTREE_PAGE) {
+      hdr.numa_id = numa_map[my_thread_id];
     }
 
     if (page_is_inpmem()) {
@@ -595,10 +596,22 @@ public:
 #else
       hdr.mtx = new Spinlock();
 #endif
+    } else if (page_type_ == PageType::NVM_SUBTREE_PAGE) {
+      hdr.numa_id = numa_map[my_thread_id];
     }
 
     if (page_is_inpmem()) {
       clflush((char *)this, sizeof(Page));
+    }
+  }
+
+  Page(const Page &p) = delete;
+
+  Page(const Page &p, PageType t) {
+    *this = p;
+    hdr.page_type = t;
+    if (t == PageType::NVM_SUBTREE_PAGE) {
+      hdr.numa_id = numa_map[my_thread_id];
     }
   }
 
@@ -1231,11 +1244,13 @@ public:
             }
             
             for (int nn = 0; nn < numa_node_num; nn++) {
-              bt->read_times_[nn] /= 2;
-              sibling_subtree->read_times_[nn] = bt->read_times_[nn];
+              for (int ii = 0; ii < numa_node_num; ii++) {
+                bt->read_times_[nn][ii] /= 2;
+                sibling_subtree->read_times_[nn][ii] = bt->read_times_[nn][ii];
 
-              bt->write_times_[nn] /= 2;
-              sibling_subtree->write_times_[nn] = bt->write_times_[nn];
+                bt->write_times_[nn][ii] /= 2;
+                sibling_subtree->write_times_[nn][ii] = bt->write_times_[nn][ii];
+              }
             }
 
             if (unlikely(!index_tree_root->has_hasindextree())) {
@@ -1307,13 +1322,15 @@ public:
               bt->hotness_[i] /= 2;
               sibling_subtree->hotness_[i] = bt->hotness_[i];
             }
-            
-            for (int nn = 0; nn < numa_node_num; nn++) {
-              bt->read_times_[nn] /= 2;
-              sibling_subtree->read_times_[nn] = bt->read_times_[nn];
 
-              bt->write_times_[nn] /= 2;
-              sibling_subtree->write_times_[nn] = bt->write_times_[nn];
+            for (int nn = 0; nn < numa_node_num; nn++) {
+              for (int ii = 0; ii < numa_node_num; ii++) {
+                bt->read_times_[nn][ii] /= 2;
+                sibling_subtree->read_times_[nn][ii] = bt->read_times_[nn][ii];
+
+                bt->write_times_[nn][ii] /= 2;
+                sibling_subtree->write_times_[nn][ii] = bt->write_times_[nn][ii];
+              }
             }
 
             if (unlikely(!index_tree_root->has_hasindextree())) {
