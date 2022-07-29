@@ -25,7 +25,7 @@ function Run() {
     # Loadname="longlat-400m"
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
+    timeout 660 numactl --cpubind=1 --membind=1 ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
     echo "----------------"
@@ -76,11 +76,11 @@ do
     Run $dbname $loadnum $opnum $scansize $thread
 done
 
-dbname="fastfair"
-for thread in 31
-do
-    Run $dbname $loadnum $opnum $scansize $thread
-done
+# dbname="fastfair"
+# for thread in 31
+# do
+#     Run $dbname $loadnum $opnum $scansize $thread
+# done
 
 # if [ $# -ge 1 ]; then
 #     dbname=$1

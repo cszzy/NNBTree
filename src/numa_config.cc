@@ -27,7 +27,7 @@ void init_numa_pool() {
     }
 
     for (int i = 16; i < 32; i++) {
-        numa_map[i] = 0;
+        numa_map[i] = 1;
     }
 
     for (int i = 32; i < 48; i++) {
@@ -35,7 +35,7 @@ void init_numa_pool() {
     }
 
     for (int i = 48; i < 64; i++) {
-        numa_map[i] = 0;
+        numa_map[i] = 1;
     }
 
     for (int i = 0; i < nnbtree::numa_node_num; i++) {

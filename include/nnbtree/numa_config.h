@@ -23,7 +23,7 @@ namespace nnbtree {
 
 const int numa_max_node = 8; 
 
-const int numa_node_num = 1; // current machine numa nodes
+const int numa_node_num = 2; // current machine numa nodes
 
 const int max_thread_num = 64; // 每个numa节点32threads
 

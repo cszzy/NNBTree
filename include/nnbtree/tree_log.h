@@ -48,6 +48,7 @@ class TreeLogPool {
         }
 
         char * foregroundthread_alloc_logfile() {
+            std::lock_guard<std::mutex> lg(mutex_[numa_map[my_thread_id]]);
             bitmap * thread_bitmap = bitmap_[numa_map[my_thread_id]];
 
             if (bitmap_full(thread_bitmap)) {
@@ -66,6 +67,7 @@ class TreeLogPool {
         }
 
         void foregroundthread_delete_logfile(char *log_addr) {
+            std::lock_guard<std::mutex> lg(mutex_[numa_map[my_thread_id]]);
             bitmap * thread_bitmap = bitmap_[numa_map[my_thread_id]];
             int pos = (log_addr - (char *)log_start_addr_[numa_map[my_thread_id]]) / LogSize;
             put_back(thread_bitmap, pos);
@@ -75,6 +77,7 @@ class TreeLogPool {
         void **log_start_addr_;
         bitmap *bitmap_[numa_node_num];
         size_t mapped_len_;
+        std::mutex mutex_[numa_node_num];
 };
 
 extern TreeLogPool *treelog_pool;

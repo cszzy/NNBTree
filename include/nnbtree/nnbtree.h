@@ -22,7 +22,7 @@
 #include "numa_config.h"
 #include "tree_log.h"
 
-// #define USE_SPINLOCK // 使用spinlock还是mutex
+#define USE_SPINLOCK // 使用spinlock还是mutex
 
 #define CACHE_SUBTREE // 是否开启子树缓存
 
@@ -34,11 +34,13 @@
 
 #define BG_THREAD_NUMS 1
 
+#define NUMA_TEST
+
 #define PAGESIZE 256
 
 #define CACHE_LINE_SIZE 64
 
-#define TOPK_SUBTREE_NUM 300
+#define TOPK_SUBTREE_NUM 2000
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -277,10 +279,16 @@ class Statistics {
                 //     std::cout << std::endl;
                 // }
 
-                for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
-                    if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
-                            (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
-                        }
+                // for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
+                //     if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
+                //             (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+                //         }
+                // }
+
+                for (int i = 0; i < target; i++) {
+                    if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
+                        arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+                    }
                 }
 
                 // 重置topk
@@ -1289,7 +1297,7 @@ public:
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_DRAM);
             sibling_subtree->lock_subtree();
-            sibling_subtree->treelog_ = new TreeLog();
+            // sibling_subtree->treelog_ = new TreeLog();
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
             bt->right_sibling_subtree_ = sibling_subtree;

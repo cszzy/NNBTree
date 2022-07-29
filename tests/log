@@ -1,0 +1,230 @@
+THREAD NUMBER:         1
+LOAD_SIZE:             150000000
+PUT_SIZE:              6000000
+GET_SIZE:              1000000
+DB  name:              nnbtree
+Workload:              
+Use: generate_uniform_random
+generate 198000000 values in 10432 ms (18.9801 M values/s)
+before newdb, dram space use: 1.48121 GB
+numa 0 pool: /mnt/AEP0/data size: 192 GB
+index_tree_root: 0x5555555cffd0
+init treelog pool, pool nums:1, log size: 256kB per numa log nums: 65536
+Start run ....
+[subtree] setnewroot, height_ is 2
+[subtree] setnewroot, height_ is 3
+[nnbtree]: indextree root is 0x7fff900053c0 , indextree is 0x7fff900054f0 , height_ is 4
+generate index tree: 0x5555555cffd0
+[indextree] setnewroot, height_ is 5
+[indextree] setnewroot, height_ is 6
+Operate: 1000000
+dram space use: 0.0450211 GB
+Tree height_ is 6.
+select topk
+[indextree] setnewroot, height_ is 7
+Operate: 2000000
+dram space use: 0.0981369 GB
+Tree height_ is 7.
+Operate: 3000000
+dram space use: 0.124813 GB
+Tree height_ is 7.
+Operate: 4000000
+dram space use: 0.151745 GB
+Tree height_ is 7.
+Operate: 5000000
+dram space use: 0.178421 GB
+Tree height_ is 7.
+Operate: 6000000
+dram space use: 0.204849 GB
+Tree height_ is 7.
+Operate: 7000000
+dram space use: 0.231525 GB
+Tree height_ is 7.
+Operate: 8000000
+dram space use: 0.258457 GB
+Tree height_ is 7.
+Operate: 9000000
+dram space use: 0.285133 GB
+Tree height_ is 7.
+select topk
+Operate: 10000000
+dram space use: 0.325096 GB
+Tree height_ is 7.
+Operate: 11000000
+dram space use: 0.35001 GB
+Tree height_ is 7.
+Operate: 12000000
+dram space use: 0.37492 GB
+Tree height_ is 7.
+Operate: 13000000
+dram space use: 0.39983 GB
+Tree height_ is 7.
+Operate: 14000000
+dram space use: 0.424744 GB
+Tree height_ is 7.
+[indextree] setnewroot, height_ is 8
+Operate: 15000000
+dram space use: 0.449654 GB
+Tree height_ is 8.
+Operate: 16000000
+dram space use: 0.474712 GB
+Tree height_ is 8.
+select topk
+Operate: 17000000
+dram space use: 0.493076 GB
+Tree height_ is 8.
+Operate: 18000000
+dram space use: 0.514442 GB
+Tree height_ is 8.
+Operate: 19000000
+dram space use: 0.537842 GB
+Tree height_ is 8.
+Operate: 20000000
+dram space use: 0.561745 GB
+Tree height_ is 8.
+Operate: 21000000
+dram space use: 0.585392 GB
+Tree height_ is 8.
+Operate: 22000000
+dram space use: 0.609043 GB
+Tree height_ is 8.
+select topk
+Operate: 23000000
+dram space use: 0.628494 GB
+Tree height_ is 8.
+Operate: 24000000
+dram space use: 0.638752 GB
+Tree height_ is 8.
+Operate: 25000000
+dram space use: 0.661648 GB
+Tree height_ is 8.
+Operate: 26000000
+dram space use: 0.68454 GB
+Tree height_ is 8.
+Operate: 27000000
+dram space use: 0.707432 GB
+Tree height_ is 8.
+Operate: 28000000
+dram space use: 0.730324 GB
+Tree height_ is 8.
+select topk
+Operate: 29000000
+dram space use: 0.741859 GB
+Tree height_ is 8.
+Operate: 30000000
+dram space use: 0.761723 GB
+Tree height_ is 8.
+Operate: 31000000
+dram space use: 0.784081 GB
+Tree height_ is 8.
+Operate: 32000000
+dram space use: 0.806217 GB
+Tree height_ is 8.
+Operate: 33000000
+dram space use: 0.828602 GB
+Tree height_ is 8.
+select topk
+Operate: 34000000
+dram space use: 0.848812 GB
+Tree height_ is 8.
+Operate: 35000000
+dram space use: 0.865623 GB
+Tree height_ is 8.
+Operate: 36000000
+dram space use: 0.887505 GB
+Tree height_ is 8.
+Operate: 37000000
+dram space use: 0.909641 GB
+Tree height_ is 8.
+Operate: 38000000
+dram space use: 0.931526 GB
+Tree height_ is 8.
+Operate: 39000000
+dram space use: 0.953407 GB
+Tree height_ is 8.
+select topk
+Operate: 40000000
+dram space use: 0.967705 GB
+Tree height_ is 8.
+Operate: 41000000
+dram space use: 0.98959 GB
+Tree height_ is 8.
+Operate: 42000000
+dram space use: 1.01122 GB
+Tree height_ is 8.
+Operate: 43000000
+dram space use: 1.0331 GB
+Tree height_ is 8.
+Operate: 44000000
+dram space use: 1.05473 GB
+Tree height_ is 8.
+select topk
+Operate: 45000000
+dram space use: 1.06879 GB
+Tree height_ is 8.
+Operate: 46000000
+dram space use: 1.09017 GB
+Tree height_ is 8.
+Operate: 47000000
+dram space use: 1.1118 GB
+Tree height_ is 8.
+Operate: 48000000
+dram space use: 1.13318 GB
+Tree height_ is 8.
+Operate: 49000000
+dram space use: 1.15456 GB
+Tree height_ is 8.
+select topk
+Operate: 50000000
+dram space use: 1.16785 GB
+Tree height_ is 8.
+Operate: 51000000
+dram space use: 1.18898 GB
+Tree height_ is 8.
+Operate: 52000000
+dram space use: 1.21011 GB
+Tree height_ is 8.
+Operate: 53000000
+dram space use: 1.23124 GB
+Tree height_ is 8.
+Operate: 54000000
+dram space use: 1.25236 GB
+Tree height_ is 8.
+select topk
+Operate: 55000000
+dram space use: 1.26465 GB
+Tree height_ is 8.
+Operate: 56000000
+dram space use: 1.28578 GB
+Tree height_ is 8.
+Operate: 57000000
+dram space use: 1.30665 GB
+Tree height_ is 8.
+Operate: 58000000
+dram space use: 1.32778 GB
+Tree height_ is 8.
+select topk
+Operate: 59000000
+dram space use: 1.34433 GB
+Tree height_ is 8.
+Operate: 60000000
+dram space use: 1.3634 GB
+Tree height_ is 8.
+Operate: 61000000
+dram space use: 1.38427 GB
+Tree height_ is 8.
+Operate: 62000000
+dram space use: 1.40514 GB
+Tree height_ is 8.
+Operate: 63000000
+dram space use: 1.42577 GB
+Tree height_ is 8.
+select topk
+Operate: 64000000
+dram space use: 1.44107 GB
+Tree height_ is 8.
+Operate: 65000000
+dram space use: 1.46194 GB
+Tree height_ is 8.
+Operate: 66000000
+dram space use: 1.48231 GB

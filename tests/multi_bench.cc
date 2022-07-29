@@ -18,8 +18,6 @@
 
 #include "apex_util.h"
 
-// #define NUMA_TEST
-
 using ycsbc::KvDB;
 
 using namespace util;
@@ -81,7 +79,7 @@ void show_help(char* prog) {
     "    --help[-h]               show help" << std::endl;
 }
 
-int thread_num = 1;
+int thread_num = 32;
 size_t LOAD_SIZE   = 150000000;
 size_t PUT_SIZE    = 6000000;
 size_t GET_SIZE    = 1000000;
@@ -409,6 +407,7 @@ int main(int argc, char *argv[]) {
   // std::cout << "getchar:" <<std::endl;
   // getchar();
 
+  GET_SIZE *= 20;
   {
      // Get
     uint64_t *new_test = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.9);

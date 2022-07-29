@@ -522,14 +522,14 @@ retry:
 #endif
 
   // 释放日志，设置日志指针为null
-  delete treelog_;
-  treelog_ = nullptr;
+  // delete treelog_;
+  // treelog_ = nullptr;
 }
 
 void SubTree::move_to_dram() {
   // 分配日志
-  treelog_ = new TreeLog();
-  assert(treelog_);
+  // treelog_ = new TreeLog();
+  // assert(treelog_);
 
   // 层序遍历subtree，copy到内存
   // assert(subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM);
