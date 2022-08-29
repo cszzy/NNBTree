@@ -308,6 +308,10 @@ int main(int argc, char *argv[]) {
 
   db->Init();
 
+  GET_SIZE = 200000000;
+  uint64_t *GET_data = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.99);
+  // uint64_t *GET_data = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
+
   nnbtree::Timer timer;
   uint64_t us_times; 
   std::cout << "Start run ...." << std::endl;
@@ -406,13 +410,8 @@ int main(int argc, char *argv[]) {
   }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
-
-  GET_SIZE *= 20;
   {
      // Get
-    uint64_t *new_test = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.9);
-    // uint64_t *new_test = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
-
     clear_cache();
     // std::cout << "getchar" << std::endl;
     // getchar();
@@ -434,8 +433,8 @@ int main(int argc, char *argv[]) {
             size_t size = (thread_id == thread_num-1) ? GET_SIZE-(thread_num-1)*per_thread_size : per_thread_size;
             size_t value;
             for (size_t j = 0; j < size; ++j) {
-                bool ret = db->Get(new_test[start_pos+j], value);
-                if (ret != true || value != new_test[start_pos+j]) {
+                bool ret = db->Get(GET_data[start_pos+j], value);
+                if (ret != true || value != GET_data[start_pos+j]) {
                     std::cout << "Get error!" << std::endl;
                 }
                 if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 

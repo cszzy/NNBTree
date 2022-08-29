@@ -45,7 +45,7 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 3 // 子树最大高度, 应尽量地设置小一些提高性能
+#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
 
@@ -141,7 +141,9 @@ public:
   Page *getRoot();
 
   void cal_hotness();
-  uint64_t get_hotness() const;
+  uint64_t get_tmphotness() const;
+  uint64_t get_hotness(int numa_id) const;
+  void set_numaid(int numa_id);
   void setSubTreeStatus(SubTreeStatus status);
   SubTreeStatus getSubTreeStatus() const;
   void move_to_nvm(); // 淘汰
@@ -283,7 +285,20 @@ class Statistics {
 
                 for (int i = 0; i < target; i++) {
                     if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
-                        arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+
+                      // 计算目标numa id
+                      uint64_t max_hotness = 0, target_numa_id;
+                      for (int j = 0; j < numa_node_num; j++) {
+                        uint64_t t = arr[i]->get_hotness(j);
+                        if (t > max_hotness) {
+                          target_numa_id = j;
+                          max_hotness = t;
+                        }
+                      }
+
+                      arr[i]->set_numaid(target_numa_id);
+
+                      arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
                     }
                 }
 
@@ -305,17 +320,17 @@ class Statistics {
 
   int partition(std::vector<SubTree *> &arr, int low, int high) {
     int pos = low + random() % (high - low + 1);
-    uint64_t pivot = arr[pos]->get_hotness();
+    uint64_t pivot = arr[pos]->get_tmphotness();
     std::swap(arr[low], arr[pos]);
     int left = low + 1;
     int right = high;
 
     while (true) {
-      while (left <= right && arr[left]->get_hotness() <= pivot) {
+      while (left <= right && arr[left]->get_tmphotness() <= pivot) {
         left++;
       }
 
-      while (left <= right && arr[right]->get_hotness() >= pivot) {
+      while (left <= right && arr[right]->get_tmphotness() >= pivot) {
         right--;
       }
 

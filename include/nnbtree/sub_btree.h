@@ -92,14 +92,14 @@ char *SubTree::btree_search(entry_key_t key) {
     if (p->page_is_inpmem())
       read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
     else
-      read_times_[0][0] += 2;
+      read_times_[0][0] += 10;
     p = (Page *)p->linear_search(key);
   }
 
   if (p->page_is_inpmem())
     read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
   else
-    read_times_[0][0] += 2;
+    read_times_[0][0] += 10;
 
   Page *t = NULL;
   while ((t = (Page *)p->linear_search(key)) == p->hdr.right_sibling_ptr) {
@@ -131,7 +131,9 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
     // treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
   } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
     // 刷回nvm
-    move_to_nvm();
+    if (target_numa_id == numa_map[my_thread_id]) {
+      move_to_nvm();
+    }
   }
 #endif
 retry:
@@ -142,7 +144,7 @@ retry:
     if (p->page_is_inpmem())
       read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
     else
-      read_times_[0][0] += 2;
+      read_times_[0][0] += 10;
     if (t == p->hdr.right_sibling_ptr) { // XXX : very important, 不能进入另一颗子树
       // p_assert(false, "should not happen");
       subtree_lock.unlock();
@@ -165,7 +167,7 @@ retry:
   if (p->page_is_inpmem())
     write_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
   else
-    write_times_[0][0] += 2;
+    write_times_[0][0] += 10;
 
 #ifdef CACHE_SUBTREE
   if (subtree_status_ == SubTreeStatus::IN_DRAM || 
@@ -198,7 +200,7 @@ void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
     if (p->page_is_inpmem())
       read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
     else
-      read_times_[0][0] += 2;
+      read_times_[0][0] += 10;
     p = (Page *)p->linear_search(key);
   }
 
@@ -209,7 +211,7 @@ void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
   if (p->page_is_inpmem())
     write_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
   else
-    write_times_[0][0] += 2;
+    write_times_[0][0] += 10;
 }
 
 void SubTree::btree_delete(entry_key_t key) {
@@ -646,8 +648,16 @@ void SubTree::cal_hotness() {
   memset(write_times_, 0, sizeof(write_times_));
 }
 
-uint64_t SubTree::get_hotness() const {
+uint64_t SubTree::get_tmphotness() const {
   return tmp_hotness;
+}
+
+uint64_t SubTree::get_hotness(int numa_id) const {
+  return hotness_[numa_id];
+}
+
+void SubTree::set_numaid(int numa_id) {
+  target_numa_id = numa_id;
 }
 
 void SubTree::setSubTreeStatus(SubTreeStatus status) {
