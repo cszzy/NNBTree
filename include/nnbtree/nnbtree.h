@@ -112,6 +112,7 @@ private:
   uint64_t tmp_hotness; // 只使用缓存版本，记录当前热度
   uint8_t target_numa_id; // 需要迁移/写回nvm时，目标numa_id,那么需要考虑迁移线程必须是目标numa_id线程
   bool is_dirty_; // 脏页写回NVM
+  std::atomic<uint64_t> minkey; // 维护一个最小key
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
@@ -1140,23 +1141,7 @@ public:
       return NULL;
     }
 
-    // XXX: bug
-    // If this node has a sibling node,
-    if (hdr.right_sibling_ptr) {
-      // Compare this key with the first key of the sibling
-      if (key > hdr.right_sibling_ptr->records[0].key) { 
-        // 如果兄弟节点的最小key大于要插入的key,
-        // 则在兄弟节点执行插入，对应论文Fair算法中更新父节点时出现并发Insert的情况
-        // zzy add
-        // NVM::const_stat.AddCompare();
-        if (with_lock) {
-          hdr.mtx->unlock(); // Unlock the write lock
-        }
-        // return hdr.right_sibling_ptr->store(bt, NULL, key, right, true, with_lock,
-        //                               invalid_sibling);
-        return NULL;
-      }
-    }
+    assert(hdr.right_sibling_ptr == nullptr);
 
     int num_entries = count();
 
@@ -1197,12 +1182,12 @@ public:
         sibling->hdr.leftmost_ptr = (Page *)records[m].ptr;
       }
 
-      sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
+      // sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
       if (page_is_inpmem()) {
         clflush((char *)sibling, sizeof(Page));
       }
       
-      hdr.right_sibling_ptr = sibling;
+      // hdr.right_sibling_ptr = sibling;
       if (page_is_inpmem()) {
         clflush((char *)&hdr, sizeof(hdr));
       }
@@ -1248,6 +1233,11 @@ public:
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_NVM);
             sibling_subtree->lock_subtree();
+            Page *tmp = sibling;
+            while (tmp->hdr.leftmost_ptr) {
+              tmp = tmp->hdr.leftmost_ptr;
+            }
+            sibling_subtree->minkey = tmp->records[0].key;
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
             bt->right_sibling_subtree_ = sibling_subtree;
@@ -1327,6 +1317,11 @@ public:
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_DRAM);
             sibling_subtree->lock_subtree();
+            Page *tmp = sibling;
+            while (tmp->hdr.leftmost_ptr) {
+              tmp = tmp->hdr.leftmost_ptr;
+            }
+            sibling_subtree->minkey = tmp->records[0].key;
             // sibling_subtree->treelog_ = new TreeLog();
             sibling_subtree->left_sibling_subtree_ = bt;
             sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
