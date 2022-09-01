@@ -91,6 +91,11 @@ char *SubTree::btree_search(entry_key_t key) {
       }
       subtree_lock.unlock();
     }
+  } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+    // 移到内存
+    subtree_lock.lock();
+    move_to_dram();
+    subtree_lock.unlock();
   }
 
   Page *p = sub_root_;

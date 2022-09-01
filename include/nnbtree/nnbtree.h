@@ -370,7 +370,7 @@ void bgthread_func(int bg_thread_id) {
       statis_->do_gc();
 #endif
       statis_->select_topk(TOPK_SUBTREE_NUM);
-      std::this_thread::sleep_for(std::chrono::seconds(10));
+      std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }
 
