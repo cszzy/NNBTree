@@ -21,12 +21,18 @@
 #include "common.h"
 #include "numa_config.h"
 #include "tree_log.h"
+#include "rwlock.h"
 
 #define USE_SPINLOCK // 使用spinlock还是mutex
 
 #define CACHE_SUBTREE // 是否开启子树缓存
 
 #define MIGRATE_SUBTREE // 是否开启子树迁移
+
+#define CACHE_SHARD_NUM 253
+#define CACHE_ENTRY_NUM 32
+
+#define SAMPLE_TIMES 10240 // 采样间隔
 
 #define BG_THREAD_WORK // 后台线程也参与缓存和迁移
 
@@ -71,6 +77,22 @@ class Spinlock {
 
   void unlock() { flag.clear(std::memory_order_release); }
 
+  void lockWrite() {
+    lock();
+  }
+
+  void unlockWrite() {
+    unlock();
+  }
+
+  void lockRead() {
+    lock();
+  }
+
+  void unlockRead() {
+    unlock();
+  }
+
   private:
   std::atomic_flag flag{ATOMIC_FLAG_INIT};
   // char padding[63];
@@ -95,7 +117,7 @@ enum SubTreeStatus : uint32_t {
 };
 
 class SubTree {
-private:
+public:
   int32_t height_; // 4B
   // int32_t numa_id; // 标记子树在哪个numa?但是子树下的page仍然处于不同的numa节点=_=
   SubTreeStatus subtree_status_; // 标识subtree状态
@@ -116,7 +138,8 @@ private:
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
-  Spinlock subtree_lock;
+  // Spinlock subtree_lock;
+  Common::RWLock subtree_lock;
 #endif
 
 public:
@@ -156,10 +179,151 @@ public:
   friend class Page;
 };
 
+// 分片LRU Cache
+struct ListNode {
+  ListNode() : st_root_ptr(nullptr), prev(nullptr), next(nullptr), clean(true) {}
+
+  SubTree *st_root_ptr;
+  ListNode *prev;
+  ListNode *next;
+  bool clean; // 标记子树是否被修改过
+};
+
+class LRUCache {
+ private:
+  ListNode *head;                                    /* 双向链表头节点 */
+  ListNode *tail;                                    /* 双向链表尾节点 */
+  std::unordered_map<SubTree *, ListNode *> hash_map; 
+  Common::RWLock mutex_;
+  uint64_t min_hotness; // 维护cache最小热度
+
+  inline void PushToFront(ListNode *node) {
+    // push the node to the front of the double-linked list
+    if (node == head) return;
+
+    if (node == tail) {
+      tail = node->prev;
+      tail->next = nullptr;
+    } else {
+      node->prev->next = node->next;
+      node->next->prev = node->prev;
+    }
+
+    // push to head
+    node->prev = nullptr;
+    node->next = head;
+    head->prev = node;
+    head = node;
+  }
+
+ public:
+  LRUCache() {}
+  LRUCache(uint64_t max_size) : head(nullptr), tail(nullptr) {
+    ListNode *prev = nullptr;
+    for (int i = 0; i < max_size; i++) {
+      // 预先分配内存 cache entry node
+      ListNode *tmp = new ListNode();
+      // free_nodes.push(tmp);
+      if (prev) {
+        prev->next = tmp;
+        tmp->prev = prev;
+      } else {
+        head = tmp;
+      }
+      prev = tmp;
+    }
+    tail = prev;
+  }
+
+  // 返回淘汰的node
+  // new_ptr 防止死锁
+  ListNode *Evict(SubTree *new_ptr) {
+    auto node = tail;
+    // if (!node->clean) {
+    //   #ifdef STATISTIC
+    //   evict_times++;
+    //   #endif
+    //   // 由其他线程刷回后台
+    //   assert(node->st_root_ptr->getSubTreeStatus() == SubTreeStatus::IN_DRAM);
+    //   node->st_root_ptr->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+    //   node->clean = true;
+    // }
+    if(node->st_root_ptr) {
+      assert(node->st_root_ptr->getSubTreeStatus() != SubTreeStatus::IN_NVM);
+      if (node->st_root_ptr->getSubTreeStatus() == SubTreeStatus::IN_DRAM)
+        node->st_root_ptr->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+      // if (new_ptr->right_sibling_subtree_ == node->st_root_ptr) {
+      //   PushToFront(node);
+      //   node = tail;
+      // }
+      // Common::WriteGuard wl(node->st_root_ptr->subtree_lock);
+      // node->st_root_ptr->move_to_nvm();
+      hash_map.erase(node->st_root_ptr);
+      // node->st_root_ptr = nullptr;
+    }
+    node->clean = true;
+    // hash_map.erase(node->st_root_ptr);
+    return node;
+  }
+
+  // is_write标识是否为写操作
+  bool PushIntoLRU(SubTree *root_ptr, bool is_write) {
+    ListNode *node = nullptr;
+    {
+      // WriteLock wl(mutex_);
+      mutex_.lockWrite();
+      {
+        auto iter = hash_map.find(root_ptr);
+        if (iter != hash_map.end()) {
+          node = iter->second;
+        }
+      }
+
+      if (node != nullptr) {
+        if (is_write)
+          node->clean = false;
+        PushToFront(node);
+      } else {
+        #ifdef STATISTIC
+        miss_times++;
+        #endif
+        node = Evict(root_ptr);
+        if (node == nullptr) {
+          printf("node is nullptr\n");
+        }
+        node->st_root_ptr = root_ptr;
+        hash_map[root_ptr] = node;
+        PushToFront(node);
+        if (is_write)
+          node->clean = false;
+
+        if (root_ptr->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
+          if (!is_write) {
+            root_ptr->subtree_lock.lockWrite();
+            root_ptr->move_to_dram();
+            root_ptr->subtree_lock.unlockWrite();
+          } else {
+            root_ptr->move_to_dram();
+          }
+        } else if (root_ptr->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+          // printf("need to move to nvm\n");
+          root_ptr->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+        } else {
+          //存在dram子树分裂产生子树的情况
+        }
+      }
+      mutex_.unlockWrite();
+    }
+
+    return true;
+  }
+};
+
 class IndexTree {
 private:
   int height_;
   char *root; // 整个B+树的根
+  LRUCache *cache_[CACHE_SHARD_NUM]; // 子树lru_cache
 
 public:
   IndexTree(Page*, uint32_t);
@@ -181,12 +345,14 @@ public:
   void PrintInfo();
   void CalculateSapce(uint64_t &space);
   Page *getRoot();
+  void Sample(SubTree *subtree_root, bool is_write); // 统计热度，决定是否加入cache
 
   friend class Page;
 };
 
 class NNBTree;
 NNBTree *index_tree_root;
+thread_local uint64_t op_num;
 
 class Statistics {
   public:
@@ -194,6 +360,7 @@ class Statistics {
 #ifdef BG_GC
       gc_page_list = new std::list<Page *>();
 #endif
+      op_num = 0;
     }
 
     ~Statistics() {
@@ -369,7 +536,7 @@ void bgthread_func(int bg_thread_id) {
 #ifdef BG_GC // 延迟回收
       statis_->do_gc();
 #endif
-      statis_->select_topk(TOPK_SUBTREE_NUM);
+      // statis_->select_topk(TOPK_SUBTREE_NUM);
       std::this_thread::sleep_for(std::chrono::seconds(10));
     }
 }
@@ -1317,6 +1484,7 @@ public:
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_DRAM);
             sibling_subtree->lock_subtree();
+            sibling_subtree->is_dirty_ = true;
             Page *tmp = sibling;
             while (tmp->hdr.leftmost_ptr) {
               tmp = tmp->hdr.leftmost_ptr;

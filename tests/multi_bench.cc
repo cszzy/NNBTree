@@ -422,6 +422,7 @@ int main(int argc, char *argv[]) {
 
     timer.Clear();
     timer.Record("start");
+    thread_local uint64_t error_gets = 0;
     for (int i = 0; i < thread_num; ++i) {
         threads.emplace_back([&](){
             int thread_id = thread_id_count.fetch_add(1);
@@ -435,7 +436,8 @@ int main(int argc, char *argv[]) {
             for (size_t j = 0; j < size; ++j) {
                 bool ret = db->Get(GET_data[start_pos+j], value);
                 if (ret != true || value != GET_data[start_pos+j]) {
-                    std::cout << "Get error!" << std::endl;
+                    // std::cout << "Get error!" << std::endl;
+                    error_gets++;
                 }
                 if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 
             }
@@ -447,7 +449,7 @@ int main(int argc, char *argv[]) {
         
     timer.Record("stop");
     us_times = timer.Microsecond("stop", "start");
-    std::cout << "[Metic-Get]: Get " << GET_SIZE << ": " 
+    std::cout << "[Metic-Get]: Get " << GET_SIZE << ": " << "eror_gets: " << error_gets
               << "cost " << us_times/1000000.0 << "s, " 
               << "iops " << (double)(GET_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
@@ -499,7 +501,7 @@ int main(int argc, char *argv[]) {
                     get_op++;
                     int ret = db->Get(mix_test[get_start_pos+j], value);
                     if (ret != 1 || value != mix_test[get_start_pos+j]) {
-                        std::cout << "Get error!" << std::endl;
+                        // std::cout << "Get error!" << std::endl;
                     }
                   }
                   if(thread_id == 0 && (j + 1) % 100000 == 0) {

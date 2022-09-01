@@ -15,6 +15,9 @@ namespace nnbtree {
 IndexTree::IndexTree(Page *page_, uint32_t level_) {
   root = (char *)page_;
   height_ = level_ + 1;
+  for (int i = 0; i < CACHE_SHARD_NUM; i++) {
+    cache_[i] = new LRUCache(CACHE_ENTRY_NUM);
+  }
   std::cout << "[nnbtree]: indextree root is " << (void*)root << " , indextree is " << this << " , height_ is " << height_ << std::endl;
 }
 
@@ -210,6 +213,15 @@ void IndexTree::printAll() {
 
   printf("total number of keys: %d\n", total_keys);
   // pthread_mutex_unlock(&print_mtx);
+}
+
+// TODO: 目前没有考虑numa访问，先直接放进lru cache
+void IndexTree::Sample(SubTree *subtree_root, bool is_write) {
+  // 1. hash(ptr) -> cache[shard]
+  auto shard = (std::hash<uint64_t>{}((uint64_t)subtree_root)) % CACHE_SHARD_NUM; 
+  // std::cout << shard << std::endl;
+  // 2. push into lru
+  cache_[shard]->PushIntoLRU(subtree_root, is_write);
 }
 
 } // end namespace nnbtree

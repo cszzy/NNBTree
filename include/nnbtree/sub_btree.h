@@ -82,16 +82,23 @@ char *SubTree::btree_search(entry_key_t key) {
     return index_tree_root->btree_search(key);
   }
 
-  if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
-    // 刷回nvm
-    if (target_numa_id == numa_map[my_thread_id]) {
-      subtree_lock.lock();
-      if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
-        move_to_nvm();
-      }
-      subtree_lock.unlock();
-    }
+  op_num++;
+  if (op_num % SAMPLE_TIMES == 0 && index_tree_root->has_hasindextree()) {
+    ((IndexTree *)index_tree_root->tree_)->Sample(this, false);
   }
+
+  // if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
+  //   // 刷回nvm
+  //   if (target_numa_id == numa_map[my_thread_id]) {
+  //     subtree_lock.lockWrite();
+  //     if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
+  //       move_to_nvm();
+  //     }
+  //     subtree_lock.unlockWrite();
+  //   }
+  // }
+
+  subtree_lock.lockRead();
 
   Page *p = sub_root_;
 
@@ -119,18 +126,19 @@ char *SubTree::btree_search(entry_key_t key) {
   while ((t = (Page *)p->linear_search(key)) == p->hdr.right_sibling_ptr) {
     // p_assert(false, "should not happen");
     // assert(false);
-    std::cout << "azheazheazhe" << std::endl;
+    // std::cout << "azheazheazhe" << std::endl;
     p = t;
     if (!p) {
       break;
     }
   }
 
-  if (!t) {
-    printf("NOT FOUND %lu\n", key);
-    return NULL;
-  }
+  // if (!t) {
+  //   printf("NOT FOUND %lu\n", key);
+  //   return NULL;
+  // }
 
+  subtree_lock.unlockRead();
 
   return (char *)t;
 }
@@ -139,11 +147,13 @@ char *SubTree::btree_search(entry_key_t key) {
 void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   
   // std::lock_guard<std::mutex> l(subtree_lock);
-  subtree_lock.lock();
+  
   if (right_sibling_subtree_ && key >= right_sibling_subtree_->minkey) {
-    subtree_lock.unlock();
     return index_tree_root->btree_insert(key, right);
   }
+  subtree_lock.lockWrite();
+  op_num++;
+  bool flag = true;
 #ifdef CACHE_SUBTREE
   if (subtree_status_ == SubTreeStatus::IN_DRAM) {
     // treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
@@ -151,8 +161,11 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
     // 刷回nvm
     if (target_numa_id == numa_map[my_thread_id]) {
       move_to_nvm();
+      flag = false;
     }
   }
+  if (flag && (op_num % SAMPLE_TIMES == 0) && index_tree_root->has_hasindextree())
+    ((IndexTree *)index_tree_root->tree_)->Sample(this, true);
 #endif
 retry:
   Page *p = sub_root_;
@@ -165,7 +178,7 @@ retry:
       read_times_[0][0] += 10;
     if (t == p->hdr.right_sibling_ptr) { // XXX : very important, 不能进入另一颗子树
       // p_assert(false, "should not happen");
-      subtree_lock.unlock();
+      subtree_lock.unlockWrite();
       return index_tree_root->btree_insert(key, right);
     }
     p = t;
@@ -173,7 +186,7 @@ retry:
 
   if (!p->store(this, NULL, key, right, true, false)) { // store
     if (index_tree_root->has_hasindextree()) {
-      subtree_lock.unlock();
+      subtree_lock.unlockWrite();
       return index_tree_root->btree_insert(key, right);
     }
     p_assert(false, "should not happen");
@@ -192,16 +205,16 @@ retry:
     subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM)
     is_dirty_ = true;
 
-  // 检测是否需要缓存
-  if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
-    // 移到内存
-    move_to_dram();
-  }
+  // // 检测是否需要缓存
+  // if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+  //   // 移到内存
+  //   move_to_dram();
+  // }
 #endif
   uint64_t k = minkey;
   minkey = std::min(k, key);
 
-  subtree_lock.unlock();
+  subtree_lock.unlockWrite();
 
   // if (index_tree_root->has_hasindextree());
   //   index_tree_root->btree_search(key);
@@ -236,7 +249,7 @@ void SubTree::btree_insert_internal(char *left, entry_key_t key, char *right,
 
 void SubTree::btree_delete(entry_key_t key) {
   // std::lock_guard<std::mutex> l(subtree_lock);
-  subtree_lock.lock();
+  subtree_lock.lockWrite();
   
   Page *p = sub_root_;
 
@@ -262,7 +275,7 @@ void SubTree::btree_delete(entry_key_t key) {
     // printf("not found the key to delete %lu\n", key);
   }
 
-  subtree_lock.unlock();
+  subtree_lock.unlockWrite();
 }
 
 // 内部节点如果有目标key,则需要删除
@@ -397,11 +410,13 @@ Page *SubTree::getRoot() {
 }
 
 void SubTree::lock_subtree() {
-  subtree_lock.lock();
+  // subtree_lock.lock();
+  subtree_lock.lockWrite();
 }
 
 void SubTree::unlock_subtree() {
-  subtree_lock.unlock();
+  // subtree_lock.unlock();
+  subtree_lock.unlockWrite();
 }
 
 // 刷回NVM,同时删除log
