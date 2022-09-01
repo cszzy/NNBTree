@@ -40,7 +40,7 @@
 
 #define CACHE_LINE_SIZE 64
 
-#define TOPK_SUBTREE_NUM 2000
+#define TOPK_SUBTREE_NUM 100000
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -370,7 +370,7 @@ void bgthread_func(int bg_thread_id) {
       statis_->do_gc();
 #endif
       statis_->select_topk(TOPK_SUBTREE_NUM);
-      std::this_thread::sleep_for(std::chrono::seconds(5));
+      std::this_thread::sleep_for(std::chrono::seconds(2));
     }
 }
 

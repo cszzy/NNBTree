@@ -290,9 +290,6 @@ int main(int argc, char *argv[]) {
     break;
   }
 
-  size_t init_dram_space_use = physical_memory_used_by_process();
-  std::cout << "before newdb, dram space use: " << init_dram_space_use / 1024.0 /1024.0  << " GB" << std::endl;
-
   // NVM::env_init();
   nnbtree::init_numa_pool();
   
@@ -311,6 +308,9 @@ int main(int argc, char *argv[]) {
   GET_SIZE = 200000000;
   uint64_t *GET_data = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.99);
   // uint64_t *GET_data = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
+
+  size_t init_dram_space_use = physical_memory_used_by_process();
+  std::cout << "before newdb, dram space use: " << init_dram_space_use / 1024.0 /1024.0  << " GB" << std::endl;
 
   nnbtree::Timer timer;
   uint64_t us_times; 
