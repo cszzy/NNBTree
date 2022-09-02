@@ -40,7 +40,7 @@
 
 #define CACHE_LINE_SIZE 64
 
-#define TOPK_SUBTREE_NUM 100000
+#define TOPK_SUBTREE_NUM 50000
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -48,6 +48,10 @@
 #define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
+
+extern bool static_lru;
+extern uint64_t miss_times[64];
+extern uint64_t evict_times[64];
 
 namespace nnbtree {
 
@@ -217,6 +221,7 @@ class Statistics {
 
     // 选择前k个热点子树，目前只考虑缓存
     void select_topk(int k) {  
+        
         // 把子树复制过来 O(N/k)
         all_subtree_lock.lock();
         staticstic_subtree.insert(staticstic_subtree.end(), 
@@ -226,6 +231,8 @@ class Statistics {
         if (unlikely(staticstic_subtree.size() < k)) { // 子树总数小于缓存数
             return;
         }
+        
+        std::cout << "begin select topk" << std::endl;
 
         // 计算所有子树热度 O(N)
         for (auto subtree : staticstic_subtree) {
@@ -234,7 +241,7 @@ class Statistics {
 
         // O(N)得到topk，同时将热点nvm子树设置为待缓存，将非热点nvm子树设置为待淘汰
         topk(staticstic_subtree, k);
-        std::cout << "select topk" << std::endl;
+        std::cout << "end select topk, total subtree: " << staticstic_subtree.size() << std::endl;
 
         // 后台线程也参与缓存和迁移
 // #ifdef CACHE_SUBTREE
@@ -370,7 +377,7 @@ void bgthread_func(int bg_thread_id) {
       statis_->do_gc();
 #endif
       statis_->select_topk(TOPK_SUBTREE_NUM);
-      std::this_thread::sleep_for(std::chrono::seconds(2));
+      std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 
@@ -1161,6 +1168,7 @@ public:
       if (page_is_inpmem()) {
         sibling = new(true) Page(PageType::NVM_SUBTREE_PAGE, hdr.level);
       } else {
+        // std::cout << "should not happen" << std::endl;
         sibling = new(false) Page((PageType)this->hdr.page_type, hdr.level);
       }
       
@@ -1266,7 +1274,7 @@ public:
             }
 
             if (!(index_tree_root->has_hasindextree())) {
-              Page *index_root_page = new(false) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
+              Page *index_root_page = new(true) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
               IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
               index_tree_root->set_indextree(indextree_);
               index_tree_root->indextree_unlock();
@@ -1351,7 +1359,7 @@ public:
             }
 
             if (!(index_tree_root->has_hasindextree())) {
-              Page *index_root_page = new(false) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
+              Page *index_root_page = new(true) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
               IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
               index_tree_root->set_indextree(indextree_);
               index_tree_root->indextree_unlock();
@@ -1370,6 +1378,7 @@ public:
             statis_->insert_subtree(sibling_subtree);
             sibling_subtree->unlock_subtree();
           } else {
+            // std::cout << "should not happen" << std::endl;
             Page *new_root = new(false) Page(PageType::DRAM_CACHETREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);
 
@@ -1444,7 +1453,7 @@ public:
       // create a new node
       Page *sibling = nullptr;
       p_assert(!page_is_inpmem(), "index tree must be in dram");
-      sibling = new(false) Page((PageType)this->hdr.page_type, hdr.level);
+      sibling = new(true) Page((PageType)this->hdr.page_type, hdr.level);
       
       int m = (int)ceil(num_entries / 2);
       entry_key_t split_key = records[m].key;
@@ -1499,7 +1508,7 @@ public:
       // Set a new root or insert the split key to the parent
       IndexTree *indextree_ = (IndexTree *)index_tree_root->tree_;
       if (indextree_->getRoot() == this) { // only one node can update the root ptr
-        Page *index_root_page = new(false) Page(PageType::DRAM_INDEXTREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
+        Page *index_root_page = new(true) Page(PageType::DRAM_INDEXTREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
         indextree_->setNewRoot((char *)index_root_page);
         // index_tree_root.
         if (with_lock) {

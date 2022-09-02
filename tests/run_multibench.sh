@@ -9,27 +9,29 @@ function Run() {
     scansize=$4
     thread=$5
 
-    # rm -rf /mnt/AEP0/*
-    # Loadname="ycsb-400m-zipf0.9"
-    # # Loadname="ycsb-400m"
-    # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
-    # # gdb --args \
-    # timeout 660 numactl --cpubind=0 --membind=0 ${BUILDDIR}/multibench --dbname ${dbname} \
-    #     --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
-    #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
-    # echo "----------------"
-    # sleep 60
-
     rm -rf /mnt/AEP0/*
-    Loadname="longlat-400m-zipf0.9"
-    # Loadname="longlat-400m"
+    rm -rf /mnt/AEP1/*
+    Loadname="ycsb-400m-zipf0.9"
+    # Loadname="ycsb-400m"
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    timeout 660 numactl --cpubind=1 --membind=1 ${BUILDDIR}/multibench --dbname ${dbname} \
-        --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes timeout 660  ${BUILDDIR}/multibench --dbname ${dbname} \
+        --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
     echo "----------------"
     sleep 60
+
+    # rm -rf /mnt/AEP0/*
+    # rm -rf /mnt/AEP1/*
+    # Loadname="longlat-400m-zipf0.9"
+    # # Loadname="longlat-400m"
+    # date | tee multi-${dbname}-${Loadname}-th${thread}.txt
+    # # gdb --args \
+    # LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes timeout 660 ${BUILDDIR}/multibench --dbname ${dbname} \
+    #     --loadstype 4 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
+    #     -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
+    # echo "----------------"
+    # sleep 60
 
     # rm -rf /mnt/AEP0/*
     # # Loadname="longtitudes-200m"
@@ -67,20 +69,20 @@ function run_all() {
 }
 
 dbname="nnbtree"
-loadnum=400000000
+loadnum=200000000
 opnum=10000000
 scansize=4000000
 
-for thread in 31
+for thread in 16
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done
 
-dbname="fastfair"
-for thread in 31
-do
-    Run $dbname $loadnum $opnum $scansize $thread
-done
+# dbname="fastfair"
+# for thread in 16
+# do
+#     Run $dbname $loadnum $opnum $scansize $thread
+# done
 
 # if [ $# -ge 1 ]; then
 #     dbname=$1

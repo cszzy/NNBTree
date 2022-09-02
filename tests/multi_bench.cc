@@ -20,6 +20,10 @@
 
 using ycsbc::KvDB;
 
+bool static_lru;
+uint64_t miss_times[64];
+uint64_t evict_times[64];
+
 using namespace util;
 
 // 实时获取程序占用的内存，单位：kb。
@@ -309,6 +313,15 @@ int main(int argc, char *argv[]) {
   uint64_t *GET_data = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.99);
   // uint64_t *GET_data = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
 
+  // {
+  //   unordered_set<uint64_t> sss;
+  //   for (int i = 0; i < GET_SIZE; i++) {
+  //     sss.insert(GET_data[i]);
+  //   }
+
+  //   std::cout << "zipfan key nums: " << sss.size() << std::endl;
+  // }
+
   size_t init_dram_space_use = physical_memory_used_by_process();
   std::cout << "before newdb, dram space use: " << init_dram_space_use / 1024.0 /1024.0  << " GB" << std::endl;
 
@@ -328,7 +341,9 @@ int main(int argc, char *argv[]) {
   //             [](auto const& a, auto const& b) { return a.first < b.first; });
   //   db->Bulk_load(values, init_size);
   // }
-
+  static_lru = false;
+  memset(miss_times, 0, sizeof(miss_times));
+  memset(evict_times, 0, sizeof(evict_times));
   {
      // Load
     timer.Record("start");
@@ -339,6 +354,7 @@ int main(int argc, char *argv[]) {
         threads.emplace_back([&](){
             int thread_id = thread_id_count.fetch_add(1);
             nnbtree::my_thread_id = thread_id;
+            // std::cout << thread_id << std::endl << std::flush;
 #ifdef NUMA_TEST
             nnbtree::bindCore(nnbtree::my_thread_id);
 #endif
@@ -371,6 +387,9 @@ int main(int argc, char *argv[]) {
               << "iops " << (double)(LOAD_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
 
+  static_lru = false;
+  memset(miss_times, 0, sizeof(miss_times));
+  memset(evict_times, 0, sizeof(evict_times));
   {
      // Put
     clear_cache();
@@ -410,6 +429,9 @@ int main(int argc, char *argv[]) {
   }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
+  static_lru = true;
+  memset(miss_times, 0, sizeof(miss_times));
+  memset(evict_times, 0, sizeof(evict_times));
   {
      // Get
     clear_cache();
@@ -422,8 +444,10 @@ int main(int argc, char *argv[]) {
 
     timer.Clear();
     timer.Record("start");
+    
     for (int i = 0; i < thread_num; ++i) {
         threads.emplace_back([&](){
+            thread_local uint64_t error_gets = 0;
             int thread_id = thread_id_count.fetch_add(1);
             nnbtree::my_thread_id = thread_id;
 #ifdef NUMA_TEST
@@ -435,18 +459,31 @@ int main(int argc, char *argv[]) {
             for (size_t j = 0; j < size; ++j) {
                 bool ret = db->Get(GET_data[start_pos+j], value);
                 if (ret != true || value != GET_data[start_pos+j]) {
-                    std::cout << "Get error!" << std::endl;
+                    // std::cout << "Get error!" << std::endl;
+                    error_gets++;
                 }
                 if(thread_id == 0 && (j + 1) % 100000 == 0) std::cerr << "Operate: " << j + 1 << '\r'; 
             }
+            if (thread_id == 0)
+              std::cout << "eror_gets: " << error_gets << std::endl;
         });
     }
+
     for (auto& t : threads) {
       t.join();
     }
-        
+
     timer.Record("stop");
     us_times = timer.Microsecond("stop", "start");
+
+    uint64_t total_miss_times = 0;
+    uint64_t total_evict_times = 0;
+    for (int i = 0; i < 64; i++) {
+      total_miss_times += miss_times[i];
+      total_evict_times += evict_times[i];
+    }
+    
+    std::cout << "total_miss_times:" << total_miss_times << ", total_evict_times: " << total_evict_times << std::endl;
     std::cout << "[Metic-Get]: Get " << GET_SIZE << ": " 
               << "cost " << us_times/1000000.0 << "s, " 
               << "iops " << (double)(GET_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
@@ -499,7 +536,7 @@ int main(int argc, char *argv[]) {
                     get_op++;
                     int ret = db->Get(mix_test[get_start_pos+j], value);
                     if (ret != 1 || value != mix_test[get_start_pos+j]) {
-                        std::cout << "Get error!" << std::endl;
+                        // std::cout << "Get error!" << std::endl;
                     }
                   }
                   if(thread_id == 0 && (j + 1) % 100000 == 0) {

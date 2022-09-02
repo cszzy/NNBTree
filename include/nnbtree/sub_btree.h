@@ -98,6 +98,10 @@ char *SubTree::btree_search(entry_key_t key) {
     subtree_lock.unlock();
   }
 
+  if (static_lru && getSubTreeStatus() == SubTreeStatus::IN_NVM || getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM){
+    miss_times[my_thread_id]++;
+  }
+
   Page *p = sub_root_;
 
   while (p->hdr.leftmost_ptr != NULL) {
@@ -411,6 +415,8 @@ void SubTree::unlock_subtree() {
 
 // 刷回NVM,同时删除log
 void SubTree::move_to_nvm() {
+  if (static_lru)
+    evict_times[my_thread_id]++;
   // 层序遍历dram tree, 如果是脏树则写回nvm
   Page *dram_root = sub_root_;
   if (is_dirty_) {
@@ -574,6 +580,7 @@ void SubTree::move_to_nvm() {
 }
 
 void SubTree::move_to_dram() {
+  // std::cout << "should not happen" << std::endl;
   // 分配日志
   // treelog_ = new TreeLog();
   // assert(treelog_);
