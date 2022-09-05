@@ -23,10 +23,11 @@ using ycsbc::KvDB;
 bool static_lru;
 uint64_t miss_times[64];
 uint64_t evict_times[64];
+// std::unordered_set<char*> subtree_set[64];
 
 using namespace util;
 
-// 实时获取程序占用的内存，单位：kb。
+// 实时获取程序占用的内存，单位：kb
 size_t physical_memory_used_by_process()
 {
     FILE* file = fopen("/proc/self/status", "r");
@@ -432,6 +433,7 @@ int main(int argc, char *argv[]) {
   static_lru = true;
   memset(miss_times, 0, sizeof(miss_times));
   memset(evict_times, 0, sizeof(evict_times));
+  // GET_SIZE = 100000000;
   {
      // Get
     clear_cache();
@@ -482,8 +484,16 @@ int main(int argc, char *argv[]) {
       total_miss_times += miss_times[i];
       total_evict_times += evict_times[i];
     }
+
+    // std::unordered_set<char*> sssss;
+    // for (int i = 0; i < 64; i++) {
+    //   for(auto iter = subtree_set->begin(); iter != subtree_set->end(); iter++) {
+    //     sssss.insert(*iter);
+    //   }
+    // }
     
     std::cout << "total_miss_times:" << total_miss_times << ", total_evict_times: " << total_evict_times << std::endl;
+    // std::cout << "subtree set size: " << sssss.size() << std::endl;
     std::cout << "[Metic-Get]: Get " << GET_SIZE << ": " 
               << "cost " << us_times/1000000.0 << "s, " 
               << "iops " << (double)(GET_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;

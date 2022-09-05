@@ -79,7 +79,7 @@ do
 done
 
 # dbname="fastfair"
-# for thread in 16
+# for thread in 32
 # do
 #     Run $dbname $loadnum $opnum $scansize $thread
 # done

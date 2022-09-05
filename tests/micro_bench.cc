@@ -23,7 +23,7 @@ using namespace nnbtree;
 bool static_lru;
 uint64_t miss_times[64];
 uint64_t evict_times[64];
-
+std::unordered_set<char*> subtree_set[64];
 struct operation
 {
   /* data */

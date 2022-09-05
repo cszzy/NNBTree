@@ -16,6 +16,7 @@
 #include <vector>
 #include <unordered_set>
 #include <list>
+#include <algorithm>
 
 #include "nvm_alloc.h"
 #include "common.h"
@@ -266,6 +267,58 @@ class Statistics {
             return;
         }
 
+        {
+          sort(arr.begin(), arr.end(), [&](SubTree *a, SubTree *b){
+            return a->get_tmphotness() < b->get_tmphotness();
+          });
+
+          int target = arr.size() - k;
+          // 设置前k个nvm子树的状态为NEED_MOVE_TO_DRAM
+          for (int i = arr.size() - 1; i >= target; i--) {
+              topk_subtree.erase(arr[i]);
+              if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
+                  arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_DRAM);
+              }
+              //  else if (arr[i]->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+              //     arr[i]->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+              //     // std::cout << "dram subtree hasn't been move to nvm" << std::endl;
+              // }
+          }
+
+          // for (auto iter = topk_subtree.begin(); iter != topk_subtree.end(); iter++) {
+          //     if ((*iter)->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
+          //             (*iter)->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+          //         }
+          // }
+
+          for (int i = 0; i < target; i++) {
+              if (arr[i]->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
+
+                // 计算目标numa id
+                uint64_t max_hotness = 0, target_numa_id;
+                for (int j = 0; j < numa_node_num; j++) {
+                  uint64_t t = arr[i]->get_hotness(j);
+                  if (t > max_hotness) {
+                    target_numa_id = j;
+                    max_hotness = t;
+                  }
+                }
+
+                arr[i]->set_numaid(target_numa_id);
+
+                arr[i]->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
+              }
+          }
+
+          // 重置topk
+          topk_subtree.clear();
+          for (int i = arr.size() - 1; i >= target; i--) {
+              topk_subtree.insert(arr[i]);
+          }
+
+          return;
+        }
+
         srand((unsigned)time(NULL));
         int left = 0;
         int right = arr.size() - 1;
@@ -376,8 +429,9 @@ void bgthread_func(int bg_thread_id) {
 #ifdef BG_GC // 延迟回收
       statis_->do_gc();
 #endif
-      statis_->select_topk(TOPK_SUBTREE_NUM);
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+      // if (static_lru)
+      //   statis_->select_topk(TOPK_SUBTREE_NUM);
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 }
 
