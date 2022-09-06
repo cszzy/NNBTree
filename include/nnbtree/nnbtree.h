@@ -22,6 +22,7 @@
 #include "common.h"
 #include "numa_config.h"
 #include "tree_log.h"
+#include "rwlock.h"
 
 #define USE_SPINLOCK // 使用spinlock还是mutex
 
@@ -121,7 +122,8 @@ private:
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
 #else
-  Spinlock subtree_lock;
+  // Spinlock subtree_lock;
+  Common::rw_spin_lock subtree_lock;
 #endif
 
 public:
