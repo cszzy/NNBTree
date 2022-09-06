@@ -310,7 +310,7 @@ int main(int argc, char *argv[]) {
 
   db->Init();
 
-  GET_SIZE = 200000000;
+  GET_SIZE = 64000000;
   uint64_t *GET_data = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.99);
   // uint64_t *GET_data = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
 

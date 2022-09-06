@@ -41,7 +41,7 @@
 
 #define CACHE_LINE_SIZE 64
 
-#define TOPK_SUBTREE_NUM 50000
+#define TOPK_SUBTREE_NUM 30000
 
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
@@ -51,8 +51,8 @@
 using entry_key_t = uint64_t;
 
 extern bool static_lru;
-extern uint64_t miss_times[64];
-extern uint64_t evict_times[64];
+// extern uint64_t miss_times[64];
+// extern uint64_t evict_times[64];
 
 namespace nnbtree {
 
@@ -429,9 +429,9 @@ void bgthread_func(int bg_thread_id) {
 #ifdef BG_GC // 延迟回收
       statis_->do_gc();
 #endif
-      // if (static_lru)
-      //   statis_->select_topk(TOPK_SUBTREE_NUM);
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      if (static_lru)
+        statis_->select_topk(TOPK_SUBTREE_NUM);
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 

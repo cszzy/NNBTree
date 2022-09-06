@@ -15,7 +15,7 @@ function Run() {
     # Loadname="ycsb-400m"
     date | tee multi-${dbname}-${Loadname}-th${thread}.txt
     # gdb --args \
-    LD_PRELOAD=libhugetlbfs.so HUGETLB_MORECORE=yes timeout 660  ${BUILDDIR}/multibench --dbname ${dbname} \
+    timeout 660  ${BUILDDIR}/multibench --dbname ${dbname} \
         --loadstype 3 --load-size ${loadnum} --put-size ${opnum} --get-size ${opnum} \
         -t $thread | tee -a multi-${dbname}-${Loadname}-th${thread}.txt
     echo "----------------"
@@ -69,11 +69,11 @@ function run_all() {
 }
 
 dbname="nnbtree"
-loadnum=200000000
+loadnum=6000000
 opnum=10000000
 scansize=4000000
 
-for thread in 16
+for thread in 32
 do
     Run $dbname $loadnum $opnum $scansize $thread
 done

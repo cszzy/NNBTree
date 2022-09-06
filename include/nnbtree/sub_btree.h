@@ -103,16 +103,10 @@ char *SubTree::btree_search(entry_key_t key) {
       move_to_dram();
     subtree_lock.unlock();
   }
-  //  else if ((search_times % 64 == 0) && subtree_status_ == SubTreeStatus::IN_NVM) {
-  //   // 移到内存
-  //   subtree_lock.lock();
-  //   move_to_dram();
-  //   subtree_lock.unlock();
-  // }
 
-  if (static_lru && getSubTreeStatus() == SubTreeStatus::IN_NVM || getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM){
-    miss_times[my_thread_id]++;
-  }
+  // if (static_lru && getSubTreeStatus() == SubTreeStatus::IN_NVM || getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM){
+  //   miss_times[my_thread_id]++;
+  // }
 
   Page *p = sub_root_;
 
@@ -126,21 +120,25 @@ char *SubTree::btree_search(entry_key_t key) {
     // p = t;
     if (p->page_is_inpmem())
       read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-    else
-      read_times_[0][0] += 2;
+    else {
+      read_times_[0][0]+=2;
+      read_times_[1][1]+=2;
+    }
     p = (Page *)p->linear_search(key);
   }
 
   if (p->page_is_inpmem())
     read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-  else
-    read_times_[0][0] += 2;
+  else {
+    read_times_[0][0]+=2;
+    read_times_[1][1]+=2;
+  }
 
   Page *t = NULL;
   while ((t = (Page *)p->linear_search(key)) == p->hdr.right_sibling_ptr) {
     // p_assert(false, "should not happen");
     // assert(false);
-    std::cout << "azheazheazhe" << std::endl;
+    // std::cout << "azheazheazhe" << std::endl;
     p = t;
     if (!p) {
       break;
@@ -151,8 +149,6 @@ char *SubTree::btree_search(entry_key_t key) {
     printf("NOT FOUND %lu\n", key);
     return NULL;
   }
-
-  // subtree_set[my_thread_id].insert((char*)this);
 
   return (char *)t;
 }
@@ -183,8 +179,10 @@ retry:
     Page *t = (Page *)p->linear_search(key);
     if (p->page_is_inpmem())
       read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-    else
-      read_times_[0][0] += 2;
+    else {
+      read_times_[0][0]+=2;
+      read_times_[1][1]+=2;
+    }
     if (t == p->hdr.right_sibling_ptr) { // XXX : very important, 不能进入另一颗子树
       // p_assert(false, "should not happen");
       subtree_lock.unlock();
@@ -206,8 +204,10 @@ retry:
   }
   if (p->page_is_inpmem())
     write_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-  else
-    write_times_[0][0] += 2;
+  else {
+    write_times_[0][0]+=2;
+    write_times_[1][1]+=2;
+  }
 
 #ifdef CACHE_SUBTREE
   if (subtree_status_ == SubTreeStatus::IN_DRAM || 
@@ -428,8 +428,8 @@ void SubTree::unlock_subtree() {
 
 // 刷回NVM,同时删除log
 void SubTree::move_to_nvm() {
-  if (static_lru)
-    evict_times[my_thread_id]++;
+  // if (static_lru)
+  //   evict_times[my_thread_id]++;
   // 层序遍历dram tree, 如果是脏树则写回nvm
   Page *dram_root = sub_root_;
   if (is_dirty_) {
