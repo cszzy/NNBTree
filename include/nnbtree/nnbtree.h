@@ -108,8 +108,8 @@ private:
   // char *root; // 整个B+树的根
   Page *sub_root_; // 8B 正在使用的subtree的根
   Page *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
-  SubTree *left_sibling_subtree_; //左子树
-  SubTree *right_sibling_subtree_; //右子树
+  // SubTree *left_sibling_subtree_; //左子树
+  std::atomic<SubTree *> right_sibling_subtree_; //右子树
   // 对于read_times和write_times，只有cpu_id==nvm_id，才是本地访问，其他都是异地访问，需要计算异地访问的比重，决定是否迁移
   uint64_t read_times_[numa_node_num][numa_node_num]; // 各numa节点cpu写各numa节点nvm次数
   uint64_t write_times_[numa_node_num][numa_node_num]; // 各numa节点cpu读各numa节点nvm次数
@@ -431,8 +431,8 @@ void bgthread_func(int bg_thread_id) {
 #ifdef BG_GC // 延迟回收
       statis_->do_gc();
 #endif
-      if (static_lru)
-        statis_->select_topk(TOPK_SUBTREE_NUM);
+      // if (static_lru)
+      //   statis_->select_topk(TOPK_SUBTREE_NUM);
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
@@ -1193,14 +1193,9 @@ public:
 
   Page * Page::store(SubTree *bt, char *left, entry_key_t key, char *right, bool flush,
               bool with_lock, Page *invalid_sibling) {
-    if (with_lock) {
-      hdr.mtx->lock(); // Lock the write lock
-    }
-    if (hdr.is_deleted) {
-      if (with_lock) {
-        hdr.mtx->unlock();
-      }
+    assert(with_lock == false);
 
+    if (hdr.is_deleted) {
       return NULL;
     }
 
@@ -1211,10 +1206,6 @@ public:
     // FAST
     if (num_entries < cardinality - 1) { // no need to split
       insert_key(key, right, &num_entries, flush);
-
-      if (with_lock) {
-        hdr.mtx->unlock(); // Unlock the write lock
-      }
 
       return this;
     } else { // FAIR, need to split
@@ -1247,14 +1238,14 @@ public:
       }
 
       // sibling->hdr.right_sibling_ptr = hdr.right_sibling_ptr;
-      if (page_is_inpmem()) {
-        clflush((char *)sibling, sizeof(Page));
-      }
+      // if (page_is_inpmem()) {
+      //   clflush((char *)sibling, sizeof(Page));
+      // }
       
       // hdr.right_sibling_ptr = sibling;
-      if (page_is_inpmem()) {
-        clflush((char *)&hdr, sizeof(hdr));
-      }
+      // if (page_is_inpmem()) {
+      //   clflush((char *)&hdr, sizeof(hdr));
+      // }
 
       // set to NULL
       if (IS_FORWARD(hdr.switch_counter)) // XXX: 注意insert操作在设置完sibling指针即增加switch_counter
@@ -1296,17 +1287,17 @@ public:
             // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_NVM);
-            sibling_subtree->lock_subtree();
+            // sibling_subtree->lock_subtree();
             Page *tmp = sibling;
             while (tmp->hdr.leftmost_ptr) {
               tmp = tmp->hdr.leftmost_ptr;
             }
             sibling_subtree->minkey = tmp->records[0].key;
-            sibling_subtree->left_sibling_subtree_ = bt;
-            sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
+            // sibling_subtree->left_sibling_subtree_ = bt;
+            sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_.load();
             bt->right_sibling_subtree_ = sibling_subtree;
-            if (sibling_subtree->right_sibling_subtree_)
-              sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
+            // if (sibling_subtree->right_sibling_subtree_)
+            //   sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
             for (int i = 0; i < numa_node_num; i++) {
               bt->hotness_[i] /= 2;
               sibling_subtree->hotness_[i] = bt->hotness_[i];
@@ -1334,27 +1325,16 @@ public:
               IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
               index_tree_root->set_indextree(indextree_);
               index_tree_root->indextree_unlock();
-              if (with_lock) {
-                hdr.mtx->unlock(); // Unlock the write lock
-              }
               std::cout << "generate index tree: " << index_tree_root << std::endl << std::flush;
             } else {
-              if (with_lock) {
-                hdr.mtx->unlock(); // Unlock the write lock
-              }
               // 调整父节点
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
             statis_->insert_subtree(sibling_subtree);
-            sibling_subtree->unlock_subtree();
           } else {
             Page *new_root = new(true) Page(PageType::NVM_SUBTREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);
-
-            if (with_lock) {
-              hdr.mtx->unlock(); // Unlock the write lock
-            }
           }
           // Page *new_root =
           //     new Page((Page *)this, split_key, sibling, hdr.level + 1);
@@ -1364,9 +1344,6 @@ public:
           //   hdr.mtx->unlock(); // Unlock the write lock
           // }
         } else {
-          if (with_lock) {
-            hdr.mtx->unlock(); // Unlock the write lock
-          }
           // 调整父节点
           bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
         }
@@ -1380,18 +1357,17 @@ public:
             // 否则分裂subtree，插入index_tree， index_tree最后一层存的是SubTree的指针
           if (hdr.level + 1 >= MAX_SUBTREE_HEIGHT) {
             SubTree * sibling_subtree = new SubTree(sibling, SubTreeStatus::IN_DRAM);
-            sibling_subtree->lock_subtree();
             Page *tmp = sibling;
             while (tmp->hdr.leftmost_ptr) {
               tmp = tmp->hdr.leftmost_ptr;
             }
             sibling_subtree->minkey = tmp->records[0].key;
             // sibling_subtree->treelog_ = new TreeLog();
-            sibling_subtree->left_sibling_subtree_ = bt;
-            sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_;
+            // sibling_subtree->left_sibling_subtree_ = bt;
+            sibling_subtree->right_sibling_subtree_ = bt->right_sibling_subtree_.load();
             bt->right_sibling_subtree_ = sibling_subtree;
-            if (sibling_subtree->right_sibling_subtree_)
-              sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
+            // if (sibling_subtree->right_sibling_subtree_)
+            //   sibling_subtree->right_sibling_subtree_->left_sibling_subtree_ = sibling_subtree;
             for (int i = 0; i < numa_node_num; i++) {
               bt->hotness_[i] /= 2;
               sibling_subtree->hotness_[i] = bt->hotness_[i];
@@ -1414,33 +1390,22 @@ public:
               }
             }
 
-            if (!(index_tree_root->has_hasindextree())) {
+            if ((!(index_tree_root->has_hasindextree()))) {
               Page *index_root_page = new(true) Page(PageType::INDEXTREE_LAST_LEVEL_PAGE, bt, split_key, sibling_subtree, hdr.level + 1);
               IndexTree *indextree_ = new IndexTree(index_root_page, hdr.level + 1);
               index_tree_root->set_indextree(indextree_);
               index_tree_root->indextree_unlock();
-              if (with_lock) {
-                hdr.mtx->unlock(); // Unlock the write lock
-              }
               std::cout << "generate index tree: " << index_tree_root << std::endl << std::flush;
             } else {
-              if (with_lock) {
-                hdr.mtx->unlock(); // Unlock the write lock
-              }
               // 调整父节点
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
             statis_->insert_subtree(sibling_subtree);
-            sibling_subtree->unlock_subtree();
           } else {
             // std::cout << "should not happen" << std::endl;
             Page *new_root = new(false) Page(PageType::DRAM_CACHETREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);
-
-            if (with_lock) {
-              hdr.mtx->unlock(); // Unlock the write lock
-            }
           }
           // Page *new_root =
           //     new Page((Page *)this, split_key, sibling, hdr.level + 1);
@@ -1450,9 +1415,6 @@ public:
           //   hdr.mtx->unlock(); // Unlock the write lock
           // }
         } else {
-          if (with_lock) {
-            hdr.mtx->unlock(); // Unlock the write lock
-          }
           // 调整父节点
           bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
         }
@@ -1508,7 +1470,7 @@ public:
       // overflow
       // create a new node
       Page *sibling = nullptr;
-      p_assert(!page_is_inpmem(), "index tree must be in dram");
+      // p_assert(!page_is_inpmem(), "index tree must be in dram");
       sibling = new(true) Page((PageType)this->hdr.page_type, hdr.level);
       
       int m = (int)ceil(num_entries / 2);
@@ -1516,13 +1478,14 @@ public:
 
       // migrate half of keys into the sibling
       int sibling_cnt = 0;
-      if (hdr.leftmost_ptr == NULL) { // leaf node
-        p_assert(false, "should not be here!");
-        for (int i = m; i < num_entries; ++i) {
-          sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
-                              false);
-        }
-      } else { // internal node
+      // if (hdr.leftmost_ptr == NULL) { // leaf node
+      //   p_assert(false, "should not be here!");
+      //   for (int i = m; i < num_entries; ++i) {
+      //     sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
+      //                         false);
+      //   }
+      // } else 
+      { // internal node
         for (int i = m + 1; i < num_entries; ++i) { // XXX: 这里i从m+1似乎并不平均，假设num_entries=3，则实际没移动
           sibling->insert_key(records[i].key, (char *)records[i].ptr, &sibling_cnt,
                               false);
@@ -1558,8 +1521,8 @@ public:
         ret = sibling;
       }
 
-      p_assert(hdr.page_type == PageType::DRAM_INDEXTREE_PAGE ||
-        hdr.page_type == PageType::INDEXTREE_LAST_LEVEL_PAGE, "must be indextree_page");
+      // p_assert(hdr.page_type == PageType::DRAM_INDEXTREE_PAGE ||
+      //   hdr.page_type == PageType::INDEXTREE_LAST_LEVEL_PAGE, "must be indextree_page");
 
       // Set a new root or insert the split key to the parent
       IndexTree *indextree_ = (IndexTree *)index_tree_root->tree_;
@@ -1575,7 +1538,7 @@ public:
           hdr.mtx->unlock(); // Unlock the write lock
         }
         // 调整父节点
-        p_assert(bt == indextree_, "should be equal");
+        // p_assert(bt == indextree_, "should be equal");
         bt->btree_insert_internal(NULL, split_key, (char *)sibling, hdr.level + 1);
       }
 

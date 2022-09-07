@@ -25,7 +25,7 @@ namespace nnbtree {
 /*
  * class SubTree
  */
-SubTree::SubTree(SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibling_subtree_(NULL), minkey(UINT64_MAX),
+SubTree::SubTree(SubTreeStatus status) : right_sibling_subtree_(NULL), minkey(UINT64_MAX),
                       is_dirty_(false), treelog_(NULL), tmp_hotness(0) {
   // root = (char *)new Page();
   // height_ = 1;
@@ -42,7 +42,7 @@ SubTree::SubTree(SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibl
   // printf("[nnbtree]: root is %p, SubTree is %p.\n", sub_root_, this);
 }
 
-SubTree::SubTree(Page *root_, SubTreeStatus status) : left_sibling_subtree_(NULL), right_sibling_subtree_(NULL), minkey(UINT64_MAX),
+SubTree::SubTree(Page *root_, SubTreeStatus status) : right_sibling_subtree_(NULL), minkey(UINT64_MAX),
                       is_dirty_(false), treelog_(NULL), tmp_hotness(0) {
     if(root_ == nullptr) {
       sub_root_ = new(true) Page(PageType::NVM_SUBTREE_PAGE, 0);
@@ -83,7 +83,7 @@ void SubTree::setNewRoot(char *new_root) {
 char *SubTree::btree_search(entry_key_t key) {
   search_times++;
   // std::lock_guard<std::mutex> l(subtree_lock);
-  if (right_sibling_subtree_ && key >= right_sibling_subtree_->minkey) {
+  if (right_sibling_subtree_ && key >= right_sibling_subtree_.load()->minkey.load()) {
     return index_tree_root->btree_search(key);
   }
 
@@ -107,6 +107,8 @@ char *SubTree::btree_search(entry_key_t key) {
   // if (static_lru && getSubTreeStatus() == SubTreeStatus::IN_NVM || getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM){
   //   miss_times[my_thread_id]++;
   // }
+
+  subtree_lock.lock_reader();
 
   Page *p = sub_root_;
 
@@ -145,6 +147,8 @@ char *SubTree::btree_search(entry_key_t key) {
     }
   }
 
+  subtree_lock.unlock_reader();
+
   if (!t) {
     printf("NOT FOUND %lu\n", key);
     return NULL;
@@ -158,7 +162,7 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   
   // std::lock_guard<std::mutex> l(subtree_lock);
   subtree_lock.lock_writer();
-  if (right_sibling_subtree_ && key >= right_sibling_subtree_->minkey) {
+  if (right_sibling_subtree_ && key >= right_sibling_subtree_.load()->minkey.load()) {
     subtree_lock.unlock_writer();
     return index_tree_root->btree_insert(key, right);
   }

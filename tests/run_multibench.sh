@@ -69,7 +69,7 @@ function run_all() {
 }
 
 dbname="nnbtree"
-loadnum=6000000
+loadnum=10000000
 opnum=10000000
 scansize=4000000
 
