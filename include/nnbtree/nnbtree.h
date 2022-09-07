@@ -23,6 +23,7 @@
 #include "numa_config.h"
 #include "tree_log.h"
 #include "rwlock.h"
+#include "readerwritercircularbuffer.h"
 
 #define USE_SPINLOCK // 使用spinlock还是mutex
 
@@ -33,6 +34,8 @@
 #define BG_THREAD_WORK // 后台线程也参与缓存和迁移
 
 #define BG_GC // BG线程进行垃圾回收
+
+#define MAX_FG_THREADS 64
 
 #define BG_THREAD_NUMS 1
 
@@ -195,12 +198,131 @@ public:
 class NNBTree;
 NNBTree *index_tree_root;
 
+// 分片LRU Cache
+struct ListNode {
+  ListNode() : st_root_ptr(nullptr), prev(nullptr), next(nullptr) {}
+
+  SubTree *st_root_ptr;
+  ListNode *prev;
+  ListNode *next;
+};
+
+class LRUCache {
+ private:
+  ListNode *head;                                    /* 双向链表头节点 */
+  ListNode *tail;                                    /* 双向链表尾节点 */
+  std::unordered_map<SubTree *, ListNode *> hash_map; 
+  uint64_t min_hotness; // 维护cache最小热度
+
+  inline void PushToFront(ListNode *node) {
+    // push the node to the front of the double-linked list
+    if (node == head) return;
+
+    if (node == tail) {
+      tail = node->prev;
+      tail->next = nullptr;
+    } else {
+      node->prev->next = node->next;
+      node->next->prev = node->prev;
+    }
+
+    // push to head
+    node->prev = nullptr;
+    node->next = head;
+    head->prev = node;
+    head = node;
+  }
+
+ public:
+  LRUCache() {}
+  LRUCache(uint64_t max_size) : head(nullptr), tail(nullptr) {
+    ListNode *prev = nullptr;
+    for (int i = 0; i < max_size; i++) {
+      // 预先分配内存 cache entry node
+      ListNode *tmp = new ListNode();
+      // free_nodes.push(tmp);
+      if (prev) {
+        prev->next = tmp;
+        tmp->prev = prev;
+      } else {
+        head = tmp;
+      }
+      prev = tmp;
+    }
+    tail = prev;
+  }
+
+  // 返回淘汰的node
+  // new_ptr 防止死锁
+  ListNode *Evict(SubTree *new_ptr) {
+    auto node = tail;
+    // 刷回
+    if(node->st_root_ptr) {
+      // evict_times[my_thread_id]++;
+      assert(node->st_root_ptr->getSubTreeStatus() != SubTreeStatus::IN_NVM);
+      if (node->st_root_ptr->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
+        node->st_root_ptr->lock_subtree();
+        node->st_root_ptr->move_to_nvm();
+        node->st_root_ptr->unlock_subtree();
+      }
+      hash_map.erase(node->st_root_ptr);
+    }
+    return node;
+  }
+
+  // is_write标识是否为写操作
+  bool PushIntoLRU(SubTree *root_ptr) {
+    ListNode *node = nullptr;
+    {
+      // WriteLock wl(mutex_);
+      // mutex_.lockWrite();
+      {
+        auto iter = hash_map.find(root_ptr);
+        if (iter != hash_map.end()) {
+          node = iter->second;
+        }
+      }
+
+      if (node != nullptr) {
+        PushToFront(node);
+      } else {
+        #ifdef STATISTIC
+        miss_times++;
+        #endif
+        node = Evict(root_ptr);
+        if (node == nullptr) {
+          printf("node is nullptr\n");
+        }
+        node->st_root_ptr = root_ptr;
+        hash_map[root_ptr] = node;
+        PushToFront(node);
+
+        if (root_ptr->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
+          root_ptr->lock_subtree();
+          root_ptr->move_to_dram();
+          root_ptr->unlock_subtree();
+        } else if (root_ptr->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+          // printf("need to move to nvm\n");
+          root_ptr->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+        } else {
+          //存在dram子树分裂产生子树的情况
+        }
+      }
+    }
+    return true;
+  }
+};
+
 class Statistics {
   public:
     Statistics() {
 #ifdef BG_GC
       gc_page_list = new std::list<Page *>();
 #endif
+      lcache_ = new LRUCache(30000);
+      for (int i = 0; i < MAX_FG_THREADS; i++) {
+        circul_buffer[i] = new moodycamel::BlockingReaderWriterCircularBuffer<SubTree *>(4096);
+      }
     }
 
     ~Statistics() {
@@ -221,6 +343,8 @@ class Statistics {
     void insert_gc_page(const std::vector<Page *> &page_list);
     void do_gc();
 #endif
+
+// for topk策略
 
     // 选择前k个热点子树，目前只考虑缓存
     void select_topk(int k) {  
@@ -260,6 +384,22 @@ class Statistics {
 //             }
 // #endif 
 // #endif
+    }
+
+// for lru 策略
+    bool push_subtree(SubTree *subtree_) {
+      return circul_buffer[my_thread_id]->try_enqueue(subtree_);
+    }
+
+    void pop_subtree() {
+      for (int i = 0; i < MAX_FG_THREADS; i++) {
+        SubTree *t = nullptr;
+        circul_buffer[i]->try_dequeue(t);
+        if (t == nullptr)
+          continue;
+        lcache_->PushIntoLRU(t);
+      }
+      return;
     }
 
   private:
@@ -419,6 +559,9 @@ class Statistics {
   std::list<Page *> *gc_page_list;
   std::mutex gc_page_list_lock;
 #endif
+
+  moodycamel::BlockingReaderWriterCircularBuffer<SubTree *> *circul_buffer[MAX_FG_THREADS];
+  LRUCache *lcache_;
 };
 
 Statistics *statis_ = new Statistics();
@@ -433,7 +576,9 @@ void bgthread_func(int bg_thread_id) {
 #endif
       // if (static_lru)
       //   statis_->select_topk(TOPK_SUBTREE_NUM);
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      if (static_lru)
+        statis_->pop_subtree();
     }
 }
 

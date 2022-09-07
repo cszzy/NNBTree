@@ -430,7 +430,7 @@ int main(int argc, char *argv[]) {
   }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
-  static_lru = true;
+  static_lru = false;
   memset(miss_times, 0, sizeof(miss_times));
   memset(evict_times, 0, sizeof(evict_times));
   // GET_SIZE = 100000000;
