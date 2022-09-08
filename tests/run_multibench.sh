@@ -73,10 +73,10 @@ loadnum=10000000
 opnum=10000000
 scansize=4000000
 
-# for thread in 32
-# do
-#     Run $dbname $loadnum $opnum $scansize $thread
-# done
+for thread in 32
+do
+    Run $dbname $loadnum $opnum $scansize $thread
+done
 
 dbname="fastfair"
 for thread in 32

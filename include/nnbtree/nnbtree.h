@@ -50,13 +50,13 @@
 // 指示lookup移动方向
 #define IS_FORWARD(c) (c % 2 == 0)
 
-#define MAX_SUBTREE_HEIGHT 2 // 子树最大高度, 应尽量地设置小一些提高性能
+#define MAX_SUBTREE_HEIGHT 3 // 子树最大高度, 应尽量地设置小一些提高性能
 
 using entry_key_t = uint64_t;
 
 extern bool static_lru;
-// extern uint64_t miss_times[64];
-// extern uint64_t evict_times[64];
+extern uint64_t miss_times[64];
+extern uint64_t evict_times[64];
 
 namespace nnbtree {
 
@@ -103,24 +103,20 @@ enum SubTreeStatus : uint32_t {
   NEED_MOVE_TO_REMOTE // 迁移到远程
 };
 
-class SubTree {
+class __attribute__((__aligned__(64))) SubTree {
 private:
   int32_t height_; // 4B
-  // int32_t numa_id; // 标记子树在哪个numa?但是子树下的page仍然处于不同的numa节点=_=
-  SubTreeStatus subtree_status_; // 标识subtree状态
-  // char *root; // 整个B+树的根
+  std::atomic<SubTreeStatus> subtree_status_; // 标识subtree状态
   Page *sub_root_; // 8B 正在使用的subtree的根
   Page *nvm_root_; // 8B 当子树移到内存时，用此记录nvm的root
   // SubTree *left_sibling_subtree_; //左子树
   std::atomic<SubTree *> right_sibling_subtree_; //右子树
   // 对于read_times和write_times，只有cpu_id==nvm_id，才是本地访问，其他都是异地访问，需要计算异地访问的比重，决定是否迁移
-  uint64_t read_times_[numa_node_num][numa_node_num]; // 各numa节点cpu写各numa节点nvm次数
-  uint64_t write_times_[numa_node_num][numa_node_num]; // 各numa节点cpu读各numa节点nvm次数
+  uint32_t read_times_[numa_node_num][numa_node_num]; // 各numa节点cpu写各numa节点nvm次数
+  uint32_t write_times_[numa_node_num][numa_node_num]; // 各numa节点cpu读各numa节点nvm次数
   TreeLog *treelog_; // 写日志
-  uint64_t hotness_[numa_node_num]; // 记录的是上一周期的各个numa节点的nvm的热度(即读和写的加权和)
-  uint64_t tmp_hotness; // 只使用缓存版本，记录当前热度
-  uint8_t target_numa_id; // 需要迁移/写回nvm时，目标numa_id,那么需要考虑迁移线程必须是目标numa_id线程
-  bool is_dirty_; // 脏页写回NVM
+  uint32_t hotness_[numa_node_num]; // 记录的是上一周期的各个numa节点的nvm的热度(即读和写的加权和)
+  uint32_t tmp_hotness; // 只使用缓存版本，记录当前热度
   std::atomic<uint64_t> minkey; // 维护一个最小key
 #ifndef USE_SPINLOCK
   std::mutex subtree_lock; // 每个子树一个锁
@@ -128,6 +124,8 @@ private:
   // Spinlock subtree_lock;
   Common::rw_spin_lock subtree_lock;
 #endif
+  uint8_t target_numa_id; // 需要迁移/写回nvm时，目标numa_id,那么需要考虑迁移线程必须是目标numa_id线程
+  bool is_dirty_; // 脏页写回NVM
 
 public:
   SubTree(SubTreeStatus status = SubTreeStatus::IN_NVM);
@@ -255,15 +253,15 @@ class LRUCache {
   // 返回淘汰的node
   // new_ptr 防止死锁
   ListNode *Evict(SubTree *new_ptr) {
+    // evict_times[0]++;
     auto node = tail;
     // 刷回
     if(node->st_root_ptr) {
-      // evict_times[my_thread_id]++;
-      assert(node->st_root_ptr->getSubTreeStatus() != SubTreeStatus::IN_NVM);
       if (node->st_root_ptr->getSubTreeStatus() == SubTreeStatus::IN_DRAM) {
-        node->st_root_ptr->lock_subtree();
-        node->st_root_ptr->move_to_nvm();
-        node->st_root_ptr->unlock_subtree();
+        // node->st_root_ptr->lock_subtree();
+        // node->st_root_ptr->move_to_nvm();
+        // node->st_root_ptr->unlock_subtree();
+        node->st_root_ptr->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_NVM);
       }
       hash_map.erase(node->st_root_ptr);
     }
@@ -286,9 +284,6 @@ class LRUCache {
       if (node != nullptr) {
         PushToFront(node);
       } else {
-        #ifdef STATISTIC
-        miss_times++;
-        #endif
         node = Evict(root_ptr);
         if (node == nullptr) {
           printf("node is nullptr\n");
@@ -298,15 +293,17 @@ class LRUCache {
         PushToFront(node);
 
         if (root_ptr->getSubTreeStatus() == SubTreeStatus::IN_NVM) {
-          root_ptr->lock_subtree();
-          root_ptr->move_to_dram();
-          root_ptr->unlock_subtree();
-        } else if (root_ptr->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
-          // printf("need to move to nvm\n");
-          root_ptr->setSubTreeStatus(SubTreeStatus::IN_DRAM);
-        } else {
-          //存在dram子树分裂产生子树的情况
-        }
+          // root_ptr->lock_subtree();
+          // root_ptr->move_to_dram();
+          // root_ptr->unlock_subtree();
+          root_ptr->setSubTreeStatus(SubTreeStatus::NEED_MOVE_TO_DRAM);
+        } 
+        // else if (root_ptr->getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_NVM) {
+        //   // printf("need to move to nvm\n");
+        //   root_ptr->setSubTreeStatus(SubTreeStatus::IN_DRAM);
+        // } else {
+        //   //存在dram子树分裂产生子树的情况
+        // }
       }
     }
     return true;
@@ -319,7 +316,7 @@ class Statistics {
 #ifdef BG_GC
       gc_page_list = new std::list<Page *>();
 #endif
-      lcache_ = new LRUCache(30000);
+      lcache_ = new LRUCache(TOPK_SUBTREE_NUM);
       for (int i = 0; i < MAX_FG_THREADS; i++) {
         circul_buffer[i] = new moodycamel::BlockingReaderWriterCircularBuffer<SubTree *>(4096);
       }
@@ -388,6 +385,7 @@ class Statistics {
 
 // for lru 策略
     bool push_subtree(SubTree *subtree_) {
+      // std::cout << "my thread id: " << my_thread_id << std::endl << std::flush;
       return circul_buffer[my_thread_id]->try_enqueue(subtree_);
     }
 
@@ -576,7 +574,7 @@ void bgthread_func(int bg_thread_id) {
 #endif
       // if (static_lru)
       //   statis_->select_topk(TOPK_SUBTREE_NUM);
-      // std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
       if (static_lru)
         statis_->pop_subtree();
     }
@@ -1476,7 +1474,7 @@ public:
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
-            statis_->insert_subtree(sibling_subtree);
+            // statis_->insert_subtree(sibling_subtree);
           } else {
             Page *new_root = new(true) Page(PageType::NVM_SUBTREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);
             bt->setNewRoot((char *)new_root);
@@ -1546,7 +1544,7 @@ public:
               IndexTree *indextree_ = (IndexTree *)(index_tree_root->tree_);
               indextree_->btree_insert_internal(NULL, split_key, (char *)sibling_subtree, hdr.level + 1);
             }
-            statis_->insert_subtree(sibling_subtree);
+            // statis_->insert_subtree(sibling_subtree);
           } else {
             // std::cout << "should not happen" << std::endl;
             Page *new_root = new(false) Page(PageType::DRAM_CACHETREE_PAGE, (Page *)this, split_key, sibling, hdr.level + 1);

@@ -310,7 +310,7 @@ int main(int argc, char *argv[]) {
 
   db->Init();
 
-  GET_SIZE = 64000000;
+  GET_SIZE = 128000000;
   uint64_t *GET_data = apex::get_search_keys_zipf_with_theta<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE, 0.99);
   // uint64_t *GET_data = apex::get_search_keys<uint64_t>(data_base.data(), LOAD_SIZE + PUT_SIZE, GET_SIZE);
 
@@ -342,7 +342,7 @@ int main(int argc, char *argv[]) {
   //             [](auto const& a, auto const& b) { return a.first < b.first; });
   //   db->Bulk_load(values, init_size);
   // }
-  static_lru = false;
+  static_lru = true;
   memset(miss_times, 0, sizeof(miss_times));
   memset(evict_times, 0, sizeof(evict_times));
   {
@@ -388,7 +388,7 @@ int main(int argc, char *argv[]) {
               << "iops " << (double)(LOAD_SIZE)/(double)us_times*1000000.0 << " ." << std::endl;
   }
 
-  static_lru = false;
+  static_lru = true;
   memset(miss_times, 0, sizeof(miss_times));
   memset(evict_times, 0, sizeof(evict_times));
   {
@@ -430,7 +430,7 @@ int main(int argc, char *argv[]) {
   }
   // std::cout << "getchar:" <<std::endl;
   // getchar();
-  static_lru = false;
+  static_lru = true;
   memset(miss_times, 0, sizeof(miss_times));
   memset(evict_times, 0, sizeof(evict_times));
   // GET_SIZE = 100000000;

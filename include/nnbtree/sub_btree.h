@@ -15,7 +15,7 @@
 #include <queue>
 #include <set>
 
-#define SAMPLE_TIMES 32
+#define SAMPLE_TIMES 128
 
 // extern std::unordered_set<char*> subtree_set[64];
 thread_local uint64_t op_nums = 0;
@@ -82,31 +82,29 @@ void SubTree::setNewRoot(char *new_root) {
 }
 
 char *SubTree::btree_search(entry_key_t key) {
-  op_nums++;
-  if (static_lru && op_nums % SAMPLE_TIMES == 0)
-    statis_->push_subtree(this);
   // std::lock_guard<std::mutex> l(subtree_lock);
   if (right_sibling_subtree_ && key >= right_sibling_subtree_.load()->minkey.load()) {
     return index_tree_root->btree_search(key);
   }
 
-  // if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
-  //   // 刷回nvm
-  //   if (target_numa_id == numa_map[my_thread_id]) {
-  //     subtree_lock.lock_writer();
-  //     if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
-  //       move_to_nvm();
-  //     }
-  //     subtree_lock.unlock_writer();
-  //   }
-  // } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
-  //   // 移到内存
-  //   subtree_lock.lock_writer();
-  //   if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM)
-  //     move_to_dram();
-  //   subtree_lock.unlock_writer();
-  // }
+  op_nums++;
+  if (static_lru && op_nums % SAMPLE_TIMES == 0)
+    statis_->push_subtree(this);
 
+#ifdef CACHE_SUBTREE
+  if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
+    subtree_lock.lock_writer();
+    if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM)
+      move_to_nvm();
+    subtree_lock.unlock_writer();
+  } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+    // 移到内存
+    subtree_lock.lock_writer();
+    if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM)
+      move_to_dram();
+    subtree_lock.unlock_writer();
+  }
+#endif
   // if (static_lru && getSubTreeStatus() == SubTreeStatus::IN_NVM || getSubTreeStatus() == SubTreeStatus::NEED_MOVE_TO_DRAM){
   //   miss_times[my_thread_id]++;
   // }
@@ -116,34 +114,25 @@ char *SubTree::btree_search(entry_key_t key) {
   Page *p = sub_root_;
 
   while (p->hdr.leftmost_ptr != NULL) {
-    // Page *t = (Page *)p->linear_search(key);
-    // // p_assert(t != p->hdr.right_sibling_ptr, "should not happen");
-    // assert(t != p->hdr.right_sibling_ptr);
-    // if (t == p->hdr.right_sibling_ptr) {
-    //   std::cout << "azheazhe" << std::endl;
+    // if (p->page_is_inpmem())
+    //   read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
+    // else {
+    //   read_times_[0][0]+=2;
+    //   read_times_[1][1]+=2;
     // }
-    // p = t;
-    if (p->page_is_inpmem())
-      read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-    else {
-      read_times_[0][0]+=2;
-      read_times_[1][1]+=2;
-    }
     p = (Page *)p->linear_search(key);
   }
 
-  if (p->page_is_inpmem())
-    read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-  else {
-    read_times_[0][0]+=2;
-    read_times_[1][1]+=2;
-  }
+  // if (p->page_is_inpmem())
+  //   read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
+  // else {
+  //   read_times_[0][0]+=2;
+  //   read_times_[1][1]+=2;
+  // }
 
   Page *t = NULL;
   while ((t = (Page *)p->linear_search(key)) == p->hdr.right_sibling_ptr) {
     // p_assert(false, "should not happen");
-    // assert(false);
-    // std::cout << "azheazheazhe" << std::endl;
     p = t;
     if (!p) {
       break;
@@ -167,32 +156,33 @@ void SubTree::btree_insert(entry_key_t key, char *right) { // need to be string
   op_nums++;
   if (static_lru && op_nums % SAMPLE_TIMES == 0)
     statis_->push_subtree(this);
+
   subtree_lock.lock_writer();
   if (right_sibling_subtree_ && key >= right_sibling_subtree_.load()->minkey.load()) {
     subtree_lock.unlock_writer();
     return index_tree_root->btree_insert(key, right);
   }
-// #ifdef CACHE_SUBTREE
-//   if (subtree_status_ == SubTreeStatus::IN_DRAM) {
-//     // treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
-//   } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
-//     // 刷回nvm
-//     if (target_numa_id == numa_map[my_thread_id]) {
-//       move_to_nvm();
-//     }
-//   }
-// #endif
+#ifdef CACHE_SUBTREE
+  if (subtree_status_ == SubTreeStatus::IN_DRAM) {
+    // treelog_->write_log(TreeLogType::INSERT, key, (uint64_t)right);
+  } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM) {
+    move_to_nvm();
+  } else if (subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
+    // 移到内存
+    move_to_dram();
+  }
+#endif
 retry:
   Page *p = sub_root_;
 
   while (p->hdr.leftmost_ptr != NULL) {
     Page *t = (Page *)p->linear_search(key);
-    if (p->page_is_inpmem())
-      read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-    else {
-      read_times_[0][0]+=2;
-      read_times_[1][1]+=2;
-    }
+    // if (p->page_is_inpmem())
+    //   read_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
+    // else {
+    //   read_times_[0][0]+=2;
+    //   read_times_[1][1]+=2;
+    // }
     if (t == p->hdr.right_sibling_ptr) { // XXX : very important, 不能进入另一颗子树
       // p_assert(false, "should not happen");
       subtree_lock.unlock_writer();
@@ -210,26 +200,19 @@ retry:
     
     goto retry;
   }
-  if (p->page_is_inpmem())
-    write_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
-  else {
-    write_times_[0][0]+=2;
-    write_times_[1][1]+=2;
-  }
+  // if (p->page_is_inpmem())
+  //   write_times_[numa_map[my_thread_id]][p->hdr.numa_id]++;
+  // else {
+  //   write_times_[0][0]+=2;
+  //   write_times_[1][1]+=2;
+  // }
 
-#ifdef CACHE_SUBTREE
+  uint64_t k = minkey;
+  minkey = std::min(k, key);
+
   if (subtree_status_ == SubTreeStatus::IN_DRAM || 
     subtree_status_ == SubTreeStatus::NEED_MOVE_TO_NVM)
     is_dirty_ = true;
-
-  // // 检测是否需要缓存
-  // if (static_lru && subtree_status_ == SubTreeStatus::NEED_MOVE_TO_DRAM) {
-  //   // 移到内存
-  //   move_to_dram();
-  // }
-#endif
-  uint64_t k = minkey;
-  minkey = std::min(k, key);
 
   subtree_lock.unlock_writer();
 }
