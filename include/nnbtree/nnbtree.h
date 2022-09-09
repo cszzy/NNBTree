@@ -2101,6 +2101,7 @@ public:
         delete *(iter);
       }
     }
+    delete tmp_list;
   }
 #endif
 }
